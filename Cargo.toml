@@ -15,7 +15,7 @@ categories = [
 
 [dependencies]
 tracing-core = { version = "0.1", default-features = false, features = ["std"] }
-tracing-subscriber = { version = "0.2", default-features = false, features = ["fmt", "registry"] }
+tracing-subscriber = { version = "0.3", default-features = false, features = ["fmt", "registry"] }
 win_etw_macros = "0.1.*"
 win_etw_provider = "0.1.*"
 

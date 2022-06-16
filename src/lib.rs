@@ -77,7 +77,7 @@ impl<S> Layer<S> for EtwLayer
 where
     S: Subscriber + for<'a> registry::LookupSpan<'a>,
 {
-    fn new_span(&self, _attrs: &Attributes<'_>, id: &Id, ctx: Context<'_, S>) {
+    fn on_new_span(&self, _attrs: &Attributes<'_>, id: &Id, ctx: Context<'_, S>) {
         let span = ctx.span(id).expect("Span not found, this is a bug");
         let metadata = span.metadata();
         let file = metadata.file().unwrap_or("<not available>");

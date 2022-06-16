@@ -21,7 +21,7 @@ win_etw_provider = "0.1.*"
 
 [dev-dependencies]
 tracing = { version = "0.1" }
-tokio = { version = "0.2", features = ["full"] }
+tokio = { version = "1.19", features = ["full"] }
 tracing-attributes =  { version = "0.1"}
 tracing-futures = { version = "0.2" }
 futures = "0.3"

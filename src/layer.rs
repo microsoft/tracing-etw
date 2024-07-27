@@ -183,12 +183,12 @@ where
         match &self.provider_group {
             native::ProviderGroup::Unset => (),
             native::ProviderGroup::Windows(guid) => {
-                assert_ne!(guid, &Guid::zero(), "Provider GUID must not be zeroes");
+                assert_ne!(guid, &Guid::zero(), "Provider group GUID must not be zeroes");
             }
             native::ProviderGroup::Linux(name) => {
                 assert!(
                     eventheader_dynamic::ProviderOptions::is_valid_option_value(name),
-                    "Provider names must be lower case ASCII or numeric digits"
+                    "Provider group names must be lower case ASCII or numeric digits"
                 );
             }
         }

@@ -207,7 +207,7 @@ impl crate::native::EventWriter for CommonSchemaProvider {
 
                 eb.add_str8(
                     "startTime",
-                    &chrono::DateTime::to_rfc3339(&chrono::DateTime::<chrono::Utc>::from(
+                    chrono::DateTime::to_rfc3339(&chrono::DateTime::<chrono::Utc>::from(
                         start_stop_times.0,
                     )),
                     OutType::Utf8,
@@ -293,7 +293,7 @@ impl crate::native::EventWriter for CommonSchemaProvider {
 
                 eb.add_str8(
                     "eventTime",
-                    &chrono::DateTime::to_rfc3339(&chrono::DateTime::<chrono::Utc>::from(
+                    chrono::DateTime::to_rfc3339(&chrono::DateTime::<chrono::Utc>::from(
                         timestamp,
                     )),
                     OutType::Utf8,

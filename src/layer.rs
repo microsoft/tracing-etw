@@ -35,9 +35,9 @@ pub(crate) static EVENT_METADATA: std::sync::LazyLock<
 > = std::sync::LazyLock::new(|| {
     unsafe {
         let start =
-            core::ptr::addr_of!(crate::native::_start__etw_kw) as *const usize as *mut *const crate::EtwEventMetadata;
+            core::ptr::addr_of!(crate::native::_start__etw_kw) as *mut *const crate::EtwEventMetadata;
         let stop =
-            core::ptr::addr_of!(crate::native::_stop__etw_kw) as *const usize as *mut *const crate::EtwEventMetadata;
+            core::ptr::addr_of!(crate::native::_stop__etw_kw) as *mut *const crate::EtwEventMetadata;
 
         #[cfg(target_os = "windows")]
         let start = start.add(1);
@@ -193,7 +193,7 @@ where
             }
         }
 
-        #[cfg(all(target_os = "linux"))]
+        #[cfg(target_os = "linux")]
         if self
             .provider_name
             .contains(|f: char| !f.is_ascii_alphanumeric())

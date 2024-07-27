@@ -4,7 +4,7 @@ version = "0.2.0"
 edition = "2021"
 resolver = "2"
 license = "MIT"
-repository = "https://github.com/Robo210/tracing-etw"
+repository = "https://github.com/microsoft/tracing-etw"
 rust-version = "1.80"
 authors = ["Kyle Sabo", "Microsoft"]
 

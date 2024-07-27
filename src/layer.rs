@@ -3,13 +3,14 @@ use std::time::SystemTime;
 use std::{pin::Pin, sync::Arc};
 
 use tracelogging::Guid;
+#[allow(unused_imports)] // Many imports are used exclusively by feature-gated code
 use tracing::metadata::LevelFilter;
 use tracing::{span, Subscriber};
+#[allow(unused_imports)]
 use tracing_subscriber::filter::{combinator::And, FilterExt, Filtered, Targets};
+#[allow(unused_imports)]
 use tracing_subscriber::layer::Filter;
 use tracing_subscriber::{registry::LookupSpan, Layer};
-
-use crate::native::ProviderGroup;
 
 use crate::native::{EventMode, EventWriter};
 use crate::{map_level, native};
@@ -203,31 +204,13 @@ where
         }
     }
 
-    #[cfg(feature = "global_filter")]
-    pub fn build<S>(self) -> EtwLayer<S, Mode>
-    where
-        S: Subscriber + for<'a> LookupSpan<'a>,
-    {
-        self.validate_config();
-
-        EtwLayer::<S, native::Provider> {
-            provider: native::Provider::new(
-                &self.provider_name,
-                &self.provider_id,
-                &self.provider_group,
-                self.default_keyword,
-            ),
-            default_keyword: self.default_keyword,
-            _p: PhantomData,
-        }
-    }
-
+    #[cfg(not(feature = "global_filter"))]
     fn build_target_filter(&self, target: &'static str) -> Targets {
         let mut targets = Targets::new().with_target(&self.provider_name, LevelFilter::TRACE);
 
         match self.provider_group {
-            ProviderGroup::Windows(_guid) => {}
-            ProviderGroup::Linux(ref name) => {
+            native::ProviderGroup::Windows(_guid) => {}
+            native::ProviderGroup::Linux(ref name) => {
                 targets = targets.with_target(name.clone(), LevelFilter::TRACE);
             }
             _ => {}
@@ -257,6 +240,7 @@ where
         }
     }
 
+    #[cfg(not(feature = "global_filter"))]
     fn build_filter<S, P>(&self, provider: Pin<Arc<P>>) -> EtwFilter<S, P>
     where
         S: Subscriber + for<'a> LookupSpan<'a>,
@@ -290,6 +274,17 @@ where
         layer.with_filter(filter.and(targets))
     }
 
+    #[cfg(feature = "global_filter")]
+    pub fn build<S>(self) -> EtwLayer<S, Mode::Provider>
+    where
+        S: Subscriber + for<'a> LookupSpan<'a>,
+        Mode::Provider: EventWriter + 'static,
+    {
+        self.validate_config();
+
+        self.build_layer()
+    }
+
     #[allow(clippy::type_complexity)]
     #[cfg(not(feature = "global_filter"))]
     pub fn build<S>(self) -> Filtered<EtwLayer<S, Mode::Provider>, EtwFilter<S, Mode::Provider>, S>
@@ -307,12 +302,14 @@ where
     }
 }
 
+#[cfg(not(feature = "global_filter"))]
 pub struct EtwFilter<S, P> {
     provider: Pin<Arc<P>>,
     default_keyword: u64,
     _p: PhantomData<S>,
 }
 
+#[cfg(not(feature = "global_filter"))]
 impl<S, P> Filter<S> for EtwFilter<S, P>
 where
     S: Subscriber + for<'a> LookupSpan<'a>,
@@ -399,14 +396,14 @@ where
         &self,
         metadata: &'static tracing::Metadata<'static>,
     ) -> tracing::subscriber::Interest {
-        let etw_meta = get_etw_event_metadata_for_event(metadata);
+        let etw_meta = EVENT_METADATA.get(&metadata.callsite());
         let keyword = if let Some(meta) = etw_meta {
-            meta.1
+            meta.kw
         } else {
             self.default_keyword
         };
 
-        if ProviderWrapper::supports_enable_callback() {
+        if P::supports_enable_callback() {
             if self.provider.enabled(map_level(metadata.level()), keyword) {
                 tracing::subscriber::Interest::always()
             } else {
@@ -425,9 +422,9 @@ where
         metadata: &tracing::Metadata<'_>,
         _ctx: tracing_subscriber::layer::Context<'_, S>,
     ) -> bool {
-        let etw_meta = get_etw_event_metadata_for_event(metadata);
+        let etw_meta = EVENT_METADATA.get(&metadata.callsite());
         let keyword = if let Some(meta) = etw_meta {
-            meta.1
+            meta.kw
         } else {
             self.default_keyword
         };
@@ -441,9 +438,9 @@ where
         event: &tracing::Event<'_>,
         _ctx: tracing_subscriber::layer::Context<'_, S>,
     ) -> bool {
-        let etw_meta = get_etw_event_metadata_for_event(event.metadata());
+        let etw_meta = EVENT_METADATA.get(&event.metadata().callsite());
         let keyword = if let Some(meta) = etw_meta {
-            meta.1
+            meta.kw
         } else {
             self.default_keyword
         };

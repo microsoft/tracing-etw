@@ -18,6 +18,6 @@
 [docs-url]: https://docs.rs/tracing-etw
 [mit-badge]: https://img.shields.io/badge/license-MIT-blue.svg
 [mit-url]: LICENSE
-[actions-badge]: https://github.com/Robo210/tracing-etw/actions/workflows/rust.yml/badge.svg
-[actions-url]:https://github.com/Robo210/tracing-etw/actions/workflows/rust.yml
+[actions-badge]: https://github.com/microsoft/tracing-etw/actions/workflows/rust.yml/badge.svg
+[actions-url]:https://github.com/microsoft/tracing-etw/actions/workflows/rust.yml
 [maint-badge]: https://img.shields.io/badge/maintenance-experimental-blue.svg

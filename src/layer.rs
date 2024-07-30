@@ -124,7 +124,7 @@ where
         match self.provider_group {
             None => {}
             Some(ref name) => {
-                targets = targets.with_target(name.clone(), LevelFilter::TRACE);
+                targets = targets.with_target(Mode::get_provider_group(name), LevelFilter::TRACE);
             }
         }
 

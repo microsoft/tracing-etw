@@ -81,6 +81,12 @@ pub trait ProviderTypes {
     fn supports_enable_callback() -> bool;
 
     fn assert_valid(value: &Self::ProviderGroupType);
+
+    // The compiler can't see through a 'type' within a trait to tell
+    // that it trivially matches a constraint unless we lower the constraint
+    // checking into the impl, done here through constraint on the return type.
+    #[cfg(target_os = "linux")]
+    fn get_provider_group(value: &Self::ProviderGroupType) -> impl Into<String>;
 }
 
 #[doc(hidden)]

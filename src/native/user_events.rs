@@ -70,6 +70,10 @@ impl crate::native::ProviderTypes for Provider {
             "Provider group names must be lower case ASCII or numeric digits"
         );
     }
+
+    fn get_provider_group(value: &Self::ProviderGroupType) -> impl Into<String> {
+        value.clone()
+    }
 }
 
 impl Provider {

@@ -88,15 +88,7 @@ pub(crate) static EVENT_METADATA: std::sync::LazyLock<
     }
 });
 
-struct EtwLayerData {
-    fields: Box<[FieldValueIndex]>,
-    activity_id: [u8; 16], // // if set, byte 0 is 1 and 64-bit span ID in the lower 8 bytes
-    related_activity_id: [u8; 16], // if set, byte 0 is 1 and 64-bit span ID in the lower 8 bytes
-    start_time: SystemTime,
-}
-
-#[doc(hidden)]
-pub struct EtwLayerBuilder<Mode> {
+pub struct LayerBuilder<Mode> {
     pub(crate) provider_name: String,
     pub(crate) provider_id: tracelogging::Guid,
     pub(crate) provider_group: native::ProviderGroup,
@@ -104,12 +96,10 @@ pub struct EtwLayerBuilder<Mode> {
     _m: PhantomData<Mode>,
 }
 
-pub struct LayerBuilder {}
-
-impl LayerBuilder {
+impl LayerBuilder<native::Provider> {
     #[allow(clippy::new_ret_no_self)]
-    pub fn new(name: &str) -> EtwLayerBuilder<native::Provider> {
-        EtwLayerBuilder::<native::Provider> {
+    pub fn new(name: &str) -> LayerBuilder<native::Provider> {
+        LayerBuilder::<native::Provider> {
             provider_name: name.to_owned(),
             provider_id: Guid::from_name(name),
             provider_group: native::ProviderGroup::Unset,
@@ -117,7 +107,9 @@ impl LayerBuilder {
             _m: PhantomData,
         }
     }
+}
 
+impl LayerBuilder<native::common_schema::Provider> {
     /// For advanced scenarios.
     /// Emit events that follow the Common Schema 4.0 mapping.
     /// Recommended only for compatibility with specialized event consumers.
@@ -127,8 +119,8 @@ impl LayerBuilder {
     #[cfg(feature = "common_schema")]
     pub fn new_common_schema_events(
         name: &str,
-    ) -> EtwLayerBuilder<native::common_schema::Provider> {
-        EtwLayerBuilder::<native::common_schema::Provider> {
+    ) -> LayerBuilder<native::common_schema::Provider> {
+        LayerBuilder::<native::common_schema::Provider> {
             provider_name: name.to_owned(),
             provider_id: Guid::from_name(name),
             provider_group: native::ProviderGroup::Unset,
@@ -138,7 +130,7 @@ impl LayerBuilder {
     }
 }
 
-impl<Mode> EtwLayerBuilder<Mode>
+impl<Mode> LayerBuilder<Mode>
 where
     Mode: EventMode,
 {
@@ -302,6 +294,9 @@ where
     }
 }
 
+// This struct needs to be public as it implements the tracing_subscriber::Layer::Filter trait,
+// but it is not intended to be used directly by consumers.
+#[doc(hidden)]
 #[cfg(not(feature = "global_filter"))]
 pub struct EtwFilter<S, P> {
     provider: Pin<Arc<P>>,
@@ -372,6 +367,16 @@ where
     }
 }
 
+struct _EtwSpanData {
+    fields: Box<[FieldValueIndex]>,
+    activity_id: [u8; 16], // // if set, byte 0 is 1 and 64-bit span ID in the lower 8 bytes
+    related_activity_id: [u8; 16], // if set, byte 0 is 1 and 64-bit span ID in the lower 8 bytes
+    start_time: SystemTime,
+}
+
+// This struct needs to be public as it implements the tracing_subscriber::Layer trait,
+// but it is not intended to be used directly by consumers.
+#[doc(hidden)]
 pub struct EtwLayer<S, P> {
     provider: Pin<Arc<P>>,
     default_keyword: u64,
@@ -491,7 +496,7 @@ where
             return;
         };
 
-        if span.extensions().get::<EtwLayerData>().is_some() {
+        if span.extensions().get::<_EtwSpanData>().is_some() {
             return;
         }
 
@@ -530,7 +535,7 @@ where
                 i += 1;
             }
 
-            EtwLayerData {
+            _EtwSpanData {
                 fields: v.into_boxed_slice(),
                 activity_id: *GLOBAL_ACTIVITY_SEED,
                 related_activity_id: *GLOBAL_ACTIVITY_SEED,
@@ -572,7 +577,7 @@ where
         let metadata = span.metadata();
 
         let mut extensions = span.extensions_mut();
-        let data = if let Some(data) = extensions.get_mut::<EtwLayerData>() {
+        let data = if let Some(data) = extensions.get_mut::<_EtwSpanData>() {
             data
         } else {
             // We got a span that was entered without being new'ed?
@@ -613,7 +618,7 @@ where
         let metadata = span.metadata();
 
         let mut extensions = span.extensions_mut();
-        let data = if let Some(data) = extensions.get_mut::<EtwLayerData>() {
+        let data = if let Some(data) = extensions.get_mut::<_EtwSpanData>() {
             data
         } else {
             // We got a span that was entered without being new'ed?
@@ -659,7 +664,7 @@ where
         };
 
         let mut extensions = span.extensions_mut();
-        let data = if let Some(data) = extensions.get_mut::<EtwLayerData>() {
+        let data = if let Some(data) = extensions.get_mut::<_EtwSpanData>() {
             data
         } else {
             // We got a span that was entered without being new'ed?

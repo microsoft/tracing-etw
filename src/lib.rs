@@ -72,6 +72,7 @@
 //! 
 
 mod layer;
+#[doc(hidden)]
 pub mod native;
 mod values;
 

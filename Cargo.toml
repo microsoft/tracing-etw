@@ -5,7 +5,7 @@ edition = "2021"
 resolver = "2"
 license = "MIT"
 repository = "https://github.com/microsoft/tracing-etw"
-rust-version = "1.80"
+rust-version = "1.78"
 authors = ["Kyle Sabo", "Microsoft"]
 
 [lib]
@@ -25,6 +25,7 @@ tracelogging_dynamic = ">= 1.2.0"
 eventheader = ">= 0.4"
 eventheader_dynamic = ">= 0.4"
 chrono = {version="0.4", default-features = false, features=["std"]}
+once_cell = ">=1.18"
 dashmap = "6"
 paste = "1"
 

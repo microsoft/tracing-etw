@@ -16,8 +16,8 @@ use crate::native::{EventMode, EventWriter};
 use crate::{map_level, native};
 use crate::{values::*, EtwEventMetadata};
 
-pub(crate) static GLOBAL_ACTIVITY_SEED: std::sync::LazyLock<[u8; 16]> =
-    std::sync::LazyLock::new(|| {
+pub(crate) static GLOBAL_ACTIVITY_SEED: once_cell::sync::Lazy<[u8; 16]> =
+once_cell::sync::Lazy::new(|| {
         let now = std::time::SystemTime::now()
             .duration_since(std::time::SystemTime::UNIX_EPOCH)
             .unwrap()
@@ -30,9 +30,9 @@ pub(crate) static GLOBAL_ACTIVITY_SEED: std::sync::LazyLock<[u8; 16]> =
         data
     });
 
-pub(crate) static EVENT_METADATA: std::sync::LazyLock<
+pub(crate) static EVENT_METADATA: once_cell::sync::Lazy<
     dashmap::DashMap<tracing::callsite::Identifier, &'static EtwEventMetadata>,
-> = std::sync::LazyLock::new(|| {
+> = once_cell::sync::Lazy::new(|| {
     unsafe {
         let start =
             core::ptr::addr_of!(crate::native::_start__etw_kw) as *mut *const crate::EtwEventMetadata;

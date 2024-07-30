@@ -19,7 +19,3 @@ pub mod noop;
 #[cfg(not(any(target_os = "windows", target_os = "linux")))]
 #[doc(hidden)]
 pub use noop::Provider;
-
-impl crate::native::EventMode for Provider {
-    type Provider = Provider;
-}

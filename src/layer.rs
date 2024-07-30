@@ -2,7 +2,6 @@ use std::marker::PhantomData;
 use std::time::SystemTime;
 use std::{pin::Pin, sync::Arc};
 
-use tracelogging::Guid;
 #[allow(unused_imports)] // Many imports are used exclusively by feature-gated code
 use tracing::metadata::LevelFilter;
 use tracing::{span, Subscriber};
@@ -12,86 +11,19 @@ use tracing_subscriber::filter::{combinator::And, FilterExt, Filtered, Targets};
 use tracing_subscriber::layer::Filter;
 use tracing_subscriber::{registry::LookupSpan, Layer};
 
-use crate::native::{EventMode, EventWriter};
+use crate::_details::{EtwFilter, EtwLayer};
+use crate::native::{EventWriter, GuidWrapper, ProviderTypes};
 use crate::{map_level, native};
-use crate::{values::*, EtwEventMetadata};
+use crate::values::*;
+use crate::statics::*;
 
-pub(crate) static GLOBAL_ACTIVITY_SEED: once_cell::sync::Lazy<[u8; 16]> =
-once_cell::sync::Lazy::new(|| {
-        let now = std::time::SystemTime::now()
-            .duration_since(std::time::SystemTime::UNIX_EPOCH)
-            .unwrap()
-            .as_nanos();
-        let seed = (now >> 64) as u64 | now as u64;
-        let mut data = [0; 16];
-        let (seed_half, _) = data.split_at_mut(8);
-        seed_half.copy_from_slice(&seed.to_le_bytes());
-        data[0] = 0;
-        data
-    });
-
-pub(crate) static EVENT_METADATA: once_cell::sync::Lazy<
-    dashmap::DashMap<tracing::callsite::Identifier, &'static EtwEventMetadata>,
-> = once_cell::sync::Lazy::new(|| {
-    unsafe {
-        let start =
-            core::ptr::addr_of!(crate::native::_start__etw_kw) as *mut *const crate::EtwEventMetadata;
-        let stop =
-            core::ptr::addr_of!(crate::native::_stop__etw_kw) as *mut *const crate::EtwEventMetadata;
-
-        #[cfg(target_os = "windows")]
-        let start = start.add(1);
-
-        let events_slice =
-            &mut *core::ptr::slice_from_raw_parts_mut(start, stop.offset_from(start) as usize);
-
-        if events_slice.is_empty() {
-            return dashmap::DashMap::new();
-        }
-
-        // Sort spurious nulls to the end
-        events_slice.sort_unstable_by(|a, b| b.cmp(a));
-
-        // Remove spurious duplicates
-        let end_pos = events_slice.len();
-        let mut good_pos = 0;
-        while good_pos != end_pos - 1 {
-            if events_slice[good_pos] == events_slice[good_pos + 1] {
-                let mut next_pos = good_pos + 2;
-                while next_pos != end_pos {
-                    if events_slice[good_pos] != events_slice[next_pos] {
-                        good_pos += 1;
-                        events_slice[good_pos] = events_slice[next_pos];
-                    }
-                    next_pos += 1;
-                }
-                break;
-            }
-            good_pos += 1;
-        }
-
-        // Explicitly set all the values at the end to null
-        let mut next_pos = good_pos + 1;
-        while next_pos != end_pos {
-            events_slice[next_pos] = core::ptr::null();
-            next_pos += 1;
-        }
-
-        let map = dashmap::DashMap::with_capacity(events_slice.len());
-        next_pos = 0;
-        while next_pos < good_pos {
-            let event = &*events_slice[next_pos];
-            map.insert(event.identity.clone(), event);
-            next_pos += 1;
-        }
-        map
-    }
-});
-
-pub struct LayerBuilder<Mode> {
+pub struct LayerBuilder<Mode>
+where
+    Mode: ProviderTypes
+{
     pub(crate) provider_name: String,
-    pub(crate) provider_id: tracelogging::Guid,
-    pub(crate) provider_group: native::ProviderGroup,
+    pub(crate) provider_id: GuidWrapper,
+    pub(crate) provider_group: Option<Mode::ProviderGroupType>,
     pub(crate) default_keyword: u64,
     _m: PhantomData<Mode>,
 }
@@ -101,8 +33,8 @@ impl LayerBuilder<native::Provider> {
     pub fn new(name: &str) -> LayerBuilder<native::Provider> {
         LayerBuilder::<native::Provider> {
             provider_name: name.to_owned(),
-            provider_id: Guid::from_name(name),
-            provider_group: native::ProviderGroup::Unset,
+            provider_id: GuidWrapper::from_name(name),
+            provider_group: None,
             default_keyword: 1,
             _m: PhantomData,
         }
@@ -122,8 +54,8 @@ impl LayerBuilder<native::common_schema::Provider> {
     ) -> LayerBuilder<native::common_schema::Provider> {
         LayerBuilder::<native::common_schema::Provider> {
             provider_name: name.to_owned(),
-            provider_id: Guid::from_name(name),
-            provider_group: native::ProviderGroup::Unset,
+            provider_id: GuidWrapper::from_name(name),
+            provider_group: None,
             default_keyword: 1,
             _m: PhantomData,
         }
@@ -132,21 +64,24 @@ impl LayerBuilder<native::common_schema::Provider> {
 
 impl<Mode> LayerBuilder<Mode>
 where
-    Mode: EventMode,
+    Mode: ProviderTypes + 'static,
 {
     /// For advanced scenarios.
     /// Assign a provider ID to the ETW provider rather than use
     /// one generated from the provider name.
-    pub fn with_provider_id(mut self, guid: tracelogging::Guid) -> Self {
-        self.provider_id = guid;
+    pub fn with_provider_id<G>(mut self, guid: &G) -> Self
+    where
+        for<'a> &'a G: Into<GuidWrapper>
+    {
+        self.provider_id = guid.into();
         self
     }
 
     /// Get the current provider ID that will be used for the ETW provider.
     /// This is a convenience function to help with tools that do not implement
     /// the standard provider name to ID algorithm.
-    pub fn get_provider_id(&self) -> tracelogging::Guid {
-        self.provider_id
+    pub fn get_provider_id(&self) -> &GuidWrapper {
+        &self.provider_id
     }
 
     pub fn with_default_keyword(mut self, kw: u64) -> Self {
@@ -155,34 +90,19 @@ where
     }
 
     /// For advanced scenarios.
-    /// Set the ETW provider group to join this provider to.
-    #[cfg(any(target_os = "windows", doc))]
-    pub fn with_provider_group(mut self, group_id: tracelogging::Guid) -> Self {
-        self.provider_group = native::ProviderGroup::Windows(group_id);
-        self
-    }
-
-    /// For advanced scenarios.
-    /// Set the EventHeader provider group to join this provider to.
-    #[cfg(any(target_os = "linux", doc))]
-    pub fn with_provider_group(mut self, name: &str) -> Self {
-        self.provider_group =
-            native::ProviderGroup::Linux(std::borrow::Cow::Owned(name.to_owned()));
+    /// Set the provider group to join this provider to.
+    pub fn with_provider_group<G>(mut self, group_id: &G) -> Self
+    where
+        for <'a> &'a G: Into<Mode::ProviderGroupType>,
+    {
+        self.provider_group = Some(group_id.into());
         self
     }
 
     fn validate_config(&self) {
         match &self.provider_group {
-            native::ProviderGroup::Unset => (),
-            native::ProviderGroup::Windows(guid) => {
-                assert_ne!(guid, &Guid::zero(), "Provider group GUID must not be zeroes");
-            }
-            native::ProviderGroup::Linux(name) => {
-                assert!(
-                    eventheader_dynamic::ProviderOptions::is_valid_option_value(name),
-                    "Provider group names must be lower case ASCII or numeric digits"
-                );
-            }
+            None => (),
+            Some(value) => Mode::assert_valid(value)
         }
 
         #[cfg(target_os = "linux")]
@@ -200,12 +120,12 @@ where
     fn build_target_filter(&self, target: &'static str) -> Targets {
         let mut targets = Targets::new().with_target(&self.provider_name, LevelFilter::TRACE);
 
+        #[cfg(target_os = "linux")]
         match self.provider_group {
-            native::ProviderGroup::Windows(_guid) => {}
-            native::ProviderGroup::Linux(ref name) => {
+            None => {}
+            Some(ref name) => {
                 targets = targets.with_target(name.clone(), LevelFilter::TRACE);
             }
-            _ => {}
         }
 
         if !target.is_empty() {
@@ -215,12 +135,12 @@ where
         targets
     }
 
-    fn build_layer<S>(&self) -> EtwLayer<S, Mode::Provider>
+    fn build_layer<S>(&self) -> EtwLayer<S, Mode>
     where
         S: Subscriber + for<'a> LookupSpan<'a>,
-        Mode::Provider: EventWriter + 'static,
+        Mode::Provider: EventWriter<Mode> + 'static,
     {
-        EtwLayer::<S, Mode::Provider> {
+        EtwLayer::<S, Mode> {
             provider: Mode::Provider::new(
                 &self.provider_name,
                 &self.provider_id,
@@ -233,15 +153,16 @@ where
     }
 
     #[cfg(not(feature = "global_filter"))]
-    fn build_filter<S, P>(&self, provider: Pin<Arc<P>>) -> EtwFilter<S, P>
+    fn build_filter<S>(&self, provider: Pin<Arc<Mode::Provider>>) -> EtwFilter<S, Mode>
     where
         S: Subscriber + for<'a> LookupSpan<'a>,
-        P: EventWriter + 'static,
+        Mode::Provider: EventWriter<Mode> + 'static,
     {
-        EtwFilter::<S, _> {
+        EtwFilter::<S, Mode> {
             provider,
             default_keyword: self.default_keyword,
             _p: PhantomData,
+            _m: PhantomData
         }
     }
 
@@ -250,10 +171,10 @@ where
     pub fn build_with_target<S>(
         self,
         target: &'static str,
-    ) -> Filtered<EtwLayer<S, Mode::Provider>, And<EtwFilter<S, Mode::Provider>, Targets, S>, S>
+    ) -> Filtered<EtwLayer<S, Mode>, And<EtwFilter<S, Mode>, Targets, S>, S>
     where
         S: Subscriber + for<'a> LookupSpan<'a>,
-        Mode::Provider: EventWriter + 'static,
+        Mode::Provider: EventWriter<Mode> + 'static,
     {
         self.validate_config();
 
@@ -279,10 +200,10 @@ where
 
     #[allow(clippy::type_complexity)]
     #[cfg(not(feature = "global_filter"))]
-    pub fn build<S>(self) -> Filtered<EtwLayer<S, Mode::Provider>, EtwFilter<S, Mode::Provider>, S>
+    pub fn build<S>(self) -> Filtered<EtwLayer<S, Mode>, EtwFilter<S, Mode>, S>
     where
         S: Subscriber + for<'a> LookupSpan<'a>,
-        Mode::Provider: EventWriter + 'static,
+        Mode::Provider: EventWriter<Mode> + 'static,
     {
         self.validate_config();
 
@@ -294,21 +215,12 @@ where
     }
 }
 
-// This struct needs to be public as it implements the tracing_subscriber::Layer::Filter trait,
-// but it is not intended to be used directly by consumers.
-#[doc(hidden)]
 #[cfg(not(feature = "global_filter"))]
-pub struct EtwFilter<S, P> {
-    provider: Pin<Arc<P>>,
-    default_keyword: u64,
-    _p: PhantomData<S>,
-}
-
-#[cfg(not(feature = "global_filter"))]
-impl<S, P> Filter<S> for EtwFilter<S, P>
+impl<S, Mode> Filter<S> for EtwFilter<S, Mode>
 where
     S: Subscriber + for<'a> LookupSpan<'a>,
-    P: EventWriter + 'static,
+    Mode: ProviderTypes + 'static,
+    Mode::Provider: EventWriter<Mode> + 'static,
 {
     fn callsite_enabled(
         &self,
@@ -321,7 +233,7 @@ where
             self.default_keyword
         };
 
-        if P::supports_enable_callback() {
+        if Mode::supports_enable_callback() {
             if self.provider.enabled(map_level(metadata.level()), keyword) {
                 tracing::subscriber::Interest::always()
             } else {
@@ -367,26 +279,18 @@ where
     }
 }
 
-struct _EtwSpanData {
+struct SpanData {
     fields: Box<[FieldValueIndex]>,
     activity_id: [u8; 16], // // if set, byte 0 is 1 and 64-bit span ID in the lower 8 bytes
     related_activity_id: [u8; 16], // if set, byte 0 is 1 and 64-bit span ID in the lower 8 bytes
     start_time: SystemTime,
 }
 
-// This struct needs to be public as it implements the tracing_subscriber::Layer trait,
-// but it is not intended to be used directly by consumers.
-#[doc(hidden)]
-pub struct EtwLayer<S, P> {
-    provider: Pin<Arc<P>>,
-    default_keyword: u64,
-    _p: PhantomData<S>,
-}
-
-impl<S, P> Layer<S> for EtwLayer<S, P>
+impl<S, Mode> Layer<S> for EtwLayer<S, Mode>
 where
     S: Subscriber + for<'a> LookupSpan<'a>,
-    P: EventWriter + 'static,
+    Mode: ProviderTypes + 'static,
+    Mode::Provider: EventWriter<Mode> + 'static,
 {
     fn on_register_dispatch(&self, _collector: &tracing::Dispatch) {
         // Late init when the layer is installed as a subscriber
@@ -496,7 +400,7 @@ where
             return;
         };
 
-        if span.extensions().get::<_EtwSpanData>().is_some() {
+        if span.extensions().get::<SpanData>().is_some() {
             return;
         }
 
@@ -535,7 +439,7 @@ where
                 i += 1;
             }
 
-            _EtwSpanData {
+            SpanData {
                 fields: v.into_boxed_slice(),
                 activity_id: *GLOBAL_ACTIVITY_SEED,
                 related_activity_id: *GLOBAL_ACTIVITY_SEED,
@@ -577,7 +481,7 @@ where
         let metadata = span.metadata();
 
         let mut extensions = span.extensions_mut();
-        let data = if let Some(data) = extensions.get_mut::<_EtwSpanData>() {
+        let data = if let Some(data) = extensions.get_mut::<SpanData>() {
             data
         } else {
             // We got a span that was entered without being new'ed?
@@ -618,7 +522,7 @@ where
         let metadata = span.metadata();
 
         let mut extensions = span.extensions_mut();
-        let data = if let Some(data) = extensions.get_mut::<_EtwSpanData>() {
+        let data = if let Some(data) = extensions.get_mut::<SpanData>() {
             data
         } else {
             // We got a span that was entered without being new'ed?
@@ -664,7 +568,7 @@ where
         };
 
         let mut extensions = span.extensions_mut();
-        let data = if let Some(data) = extensions.get_mut::<_EtwSpanData>() {
+        let data = if let Some(data) = extensions.get_mut::<SpanData>() {
             data
         } else {
             // We got a span that was entered without being new'ed?

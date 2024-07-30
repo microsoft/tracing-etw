@@ -72,9 +72,15 @@
 //! 
 
 mod layer;
+// Module that abstracts the native ETW and Linux user_events APIs, depending on the target platform.
+// Consumers of the crate should not need to use this module directly.
 #[doc(hidden)]
 pub mod native;
 mod values;
+mod statics;
+// Module holding internal details that need to be public but should not be directly used by consumers of the crate.
+#[doc(hidden)]
+pub mod _details;
 
 pub use layer::*;
 
@@ -82,19 +88,12 @@ pub use layer::*;
 #[doc(hidden)]
 pub const fn map_level(level: &tracing::Level) -> u8 {
     match *level {
-        tracing::Level::ERROR => tracelogging::Level::Error.as_int(),
-        tracing::Level::WARN => tracelogging::Level::Warning.as_int(),
-        tracing::Level::INFO => tracelogging::Level::Informational.as_int(),
-        tracing::Level::DEBUG => tracelogging::Level::Verbose.as_int(),
-        tracing::Level::TRACE => tracelogging::Level::Verbose.as_int() + 1,
+        tracing::Level::ERROR => native::native_level::Error.as_int(),
+        tracing::Level::WARN => native::native_level::Warning.as_int(),
+        tracing::Level::INFO => native::native_level::Informational.as_int(),
+        tracing::Level::DEBUG => native::native_level::Verbose.as_int(),
+        tracing::Level::TRACE => native::native_level::Verbose.as_int() + 1,
     }
-}
-
-#[doc(hidden)]
-pub struct EtwEventMetadata {
-    pub kw: u64,
-    pub identity: tracing::callsite::Identifier,
-    pub event_tag: u32,
 }
 
 #[macro_export]
@@ -122,7 +121,7 @@ macro_rules! etw_event {
             }
         );
 
-        static ETW_META: $crate::EtwEventMetadata = $crate::EtwEventMetadata{
+        static ETW_META: $crate::_details::EventMetadata = $crate::_details::EventMetadata{
             kw: $kw,
             identity: tracing_core::identify_callsite!(&CALLSITE),
             event_tag: $tags as u32
@@ -132,14 +131,14 @@ macro_rules! etw_event {
             #[cfg(target_os = "linux")]
             #[link_section = "_etw_kw"]
             #[allow(non_upper_case_globals)]
-            static mut [<ETW_META_PTR $name>]: *const $crate::EtwEventMetadata = &ETW_META;
+            static mut [<ETW_META_PTR $name>]: *const $crate::_details::EventMetadata = &ETW_META;
         }
 
         paste! {
             #[cfg(target_os = "windows")]
             #[link_section = ".rsdata$zRSETW5"]
             #[allow(non_upper_case_globals)]
-            static mut [<ETW_META_PTR $name>]: *const $crate::EtwEventMetadata = &ETW_META;
+            static mut [<ETW_META_PTR $name>]: *const $crate::_details::EventMetadata = &ETW_META;
         }
 
         let enabled = tracing::level_enabled!($lvl) && {

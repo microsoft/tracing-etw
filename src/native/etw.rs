@@ -1,11 +1,10 @@
-use crate::{values::*, GLOBAL_ACTIVITY_SEED};
+use crate::values::*;
+use crate::statics::GLOBAL_ACTIVITY_SEED;
 use chrono::{Datelike, Timelike};
 use std::{cell::RefCell, ops::DerefMut, pin::Pin, sync::Arc, time::SystemTime};
 use tracelogging::*;
 use tracelogging_dynamic::EventBuilder;
 use tracing_subscriber::registry::{LookupSpan, SpanRef};
-
-use super::ProviderGroup;
 
 #[allow(non_upper_case_globals)]
 #[link_section = ".rsdata$zRSETW0"]
@@ -72,11 +71,6 @@ impl<T> AddFieldAndValue<T> for &'_ mut tracelogging_dynamic::EventBuilder {
     }
 }
 
-#[doc(hidden)]
-pub struct Provider {
-    provider: tracelogging_dynamic::Provider,
-}
-
 fn callback_fn(
     _source_id: &Guid,
     _event_control_code: u32,
@@ -90,6 +84,25 @@ fn callback_fn(
     tracing::callsite::rebuild_interest_cache();
 }
 
+#[doc(hidden)]
+pub struct Provider {
+    provider: tracelogging_dynamic::Provider,
+}
+
+impl crate::native::ProviderTypes for Provider {
+    type Provider = Self;
+    type ProviderGroupType = crate::native::native_guid;
+
+    #[inline(always)]
+    fn supports_enable_callback() -> bool {
+        true
+    }
+
+    fn assert_valid(value: &Self::ProviderGroupType) {
+        assert_ne!(value, &crate::native::native_guid::zero(), "Provider group GUID must not be zeroes");
+    }
+}
+
 impl Provider {
     #[inline(always)]
     fn get_provider(self: Pin<&Self>) -> Pin<&tracelogging_dynamic::Provider> {
@@ -97,18 +110,18 @@ impl Provider {
     }
 }
 
-impl super::EventWriter for Provider {
+impl super::EventWriter<Provider> for Provider {
     fn new<G>(
         provider_name: &str,
         provider_id: &G,
-        provider_group: &ProviderGroup,
+        provider_group: &Option<<Self as crate::native::ProviderTypes>::ProviderGroupType>,
         _default_keyword: u64,
     ) -> Pin<Arc<Self>>
     where
         for<'a> &'a G: Into<crate::native::GuidWrapper>,
     {
         let mut options = tracelogging_dynamic::Provider::options();
-        if let ProviderGroup::Windows(guid) = provider_group {
+        if let Some(guid) = provider_group {
             options.group_id(guid);
         }
 
@@ -132,11 +145,6 @@ impl super::EventWriter for Provider {
     fn enabled(&self, level: u8, keyword: u64) -> bool {
         self.provider
             .enabled(tracelogging::Level::from_int(level), keyword)
-    }
-
-    #[inline(always)]
-    fn supports_enable_callback() -> bool {
-        true
     }
 
     fn span_start<'a, 'b, R>(

@@ -12,8 +12,6 @@ use std::{
 };
 use tracing_subscriber::registry::{LookupSpan, SpanRef};
 
-use crate::native::ProviderGroup;
-
 thread_local! {static EBW: std::cell::RefCell<EventBuilder>  = RefCell::new(EventBuilder::new());}
 
 pub(crate) struct CommonSchemaPartCBuilder<'a> {
@@ -50,6 +48,23 @@ pub struct CommonSchemaProvider {
     provider: std::sync::RwLock<eventheader_dynamic::Provider>,
 }
 
+impl crate::native::ProviderTypes for CommonSchemaProvider {
+    type Provider = Self;
+    type ProviderGroupType = std::borrow::Cow<'static, str>;
+
+    #[inline(always)]
+    fn supports_enable_callback() -> bool {
+        false
+    }
+
+    fn assert_valid(value: &Self::ProviderGroupType) {
+        assert!(
+            eventheader_dynamic::ProviderOptions::is_valid_option_value(value),
+            "Provider group names must be lower case ASCII or numeric digits"
+        );
+    }
+}
+
 impl CommonSchemaProvider {
     fn find_set(
         self: Pin<&Self>,
@@ -75,23 +90,23 @@ impl CommonSchemaProvider {
     }
 }
 
-impl crate::native::EventWriter for CommonSchemaProvider {
+impl crate::native::EventWriter<CommonSchemaProvider> for CommonSchemaProvider {
     fn new<G>(
         provider_name: &str,
         _: &G,
-        provider_group: &ProviderGroup,
+        provider_group: &Option<<Self as crate::native::ProviderTypes>::ProviderGroupType>,
         default_keyword: u64,
     ) -> Pin<Arc<Self>>
     where
         for<'a> &'a G: Into<crate::native::GuidWrapper>,
     {
         let mut options = eventheader_dynamic::Provider::new_options();
-        if let ProviderGroup::Linux(ref name) = provider_group {
+        if let Some(ref name) = provider_group {
             options = *options.group_name(name);
         }
         let mut provider = eventheader_dynamic::Provider::new(provider_name, &options);
 
-        for event in &*crate::EVENT_METADATA {
+        for event in &*crate::statics::EVENT_METADATA {
             provider.register_set(
                 eventheader_dynamic::Level::from_int(map_level(&tracing::Level::ERROR)),
                 event.kw,
@@ -148,11 +163,6 @@ impl crate::native::EventWriter for CommonSchemaProvider {
             .unwrap()
             .find_set(eventheader_dynamic::Level::from_int(level), keyword);
         if let Some(s) = es { s.enabled() } else { false }
-    }
-
-    #[inline(always)]
-    fn supports_enable_callback() -> bool {
-        false
     }
 
     fn span_start<'a, 'b, R>(

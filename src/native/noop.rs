@@ -4,8 +4,6 @@ use tracing_subscriber::registry::{LookupSpan, SpanRef};
 
 use crate::values::*;
 
-use crate::native::ProviderGroup;
-
 #[allow(non_upper_case_globals)]
 pub(crate) static mut _start__etw_kw: usize = 0;
 #[allow(non_upper_case_globals)]
@@ -22,11 +20,23 @@ impl<T> AddFieldAndValue<T> for EventBuilderWrapper<'_> {
 #[doc(hidden)]
 pub struct Provider;
 
-impl crate::native::EventWriter for Provider {
+impl crate::native::ProviderTypes for Provider {
+    type Provider = Self;
+    type ProviderGroupType = std::marker::PhantomData<u8>;
+
+    #[inline(always)]
+    fn supports_enable_callback() -> bool {
+        false
+    }
+
+    fn assert_valid(_: &Self::ProviderGroupType) {}
+}
+
+impl crate::native::EventWriter<Provider> for Provider {
     fn new<G>(
         _provider_name: &str,
         _provider_id: &G,
-        _provider_group: &ProviderGroup,
+        _provider_group: &Option<<Self as crate::native::ProviderTypes>::ProviderGroupType>,
         _default_keyword: u64,
     ) -> Pin<Arc<Self>>
     where
@@ -37,11 +47,6 @@ impl crate::native::EventWriter for Provider {
 
     #[inline(always)]
     fn enabled(&self, _level: u8, _keyword: u64) -> bool {
-        false
-    }
-
-    #[inline(always)]
-    fn supports_enable_callback() -> bool {
         false
     }
 

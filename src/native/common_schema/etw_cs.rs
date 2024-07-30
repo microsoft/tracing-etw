@@ -12,8 +12,6 @@ use tracelogging::*;
 use tracelogging_dynamic::EventBuilder;
 use tracing_subscriber::registry::{LookupSpan, SpanRef};
 
-use crate::native::ProviderGroup;
-
 thread_local! {static EBW: std::cell::RefCell<EventBuilder>  = RefCell::new(EventBuilder::new());}
 
 pub(crate) struct CommonSchemaPartCBuilder<'a> {
@@ -70,18 +68,32 @@ impl CommonSchemaProvider {
     }
 }
 
-impl crate::native::EventWriter for CommonSchemaProvider {
+impl crate::native::ProviderTypes for CommonSchemaProvider {
+    type Provider = Self;
+    type ProviderGroupType = tracelogging_dynamic::Guid;
+
+    #[inline(always)]
+    fn supports_enable_callback() -> bool {
+        true
+    }
+
+    fn assert_valid(value: &Self::ProviderGroupType) {
+        assert_ne!(value, &tracelogging_dynamic::Guid::zero(), "Provider group GUID must not be zeroes");
+    }
+}
+
+impl crate::native::EventWriter<CommonSchemaProvider> for CommonSchemaProvider {
     fn new<G>(
         provider_name: &str,
         provider_id: &G,
-        provider_group: &ProviderGroup,
+        provider_group: &Option<<Self as crate::native::ProviderTypes>::ProviderGroupType>,
         _default_keyword: u64,
     ) -> Pin<Arc<Self>>
     where
         for<'a> &'a G: Into<crate::native::GuidWrapper>,
     {
         let mut options = tracelogging_dynamic::Provider::options();
-        if let ProviderGroup::Windows(guid) = provider_group {
+        if let Some(guid) = provider_group {
             options.group_id(guid);
         }
 
@@ -105,11 +117,6 @@ impl crate::native::EventWriter for CommonSchemaProvider {
     fn enabled(&self, level: u8, keyword: u64) -> bool {
         self.provider
             .enabled(tracelogging::Level::from_int(level), keyword)
-    }
-
-    #[inline(always)]
-    fn supports_enable_callback() -> bool {
-        true
     }
 
     fn span_start<'a, 'b, R>(

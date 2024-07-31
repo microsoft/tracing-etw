@@ -82,19 +82,7 @@ mod statics;
 #[doc(hidden)]
 pub mod _details;
 
-pub use layer::*;
-
-#[inline]
-#[doc(hidden)]
-pub const fn map_level(level: &tracing::Level) -> u8 {
-    match *level {
-        tracing::Level::ERROR => native::native_level::Error.as_int(),
-        tracing::Level::WARN => native::native_level::Warning.as_int(),
-        tracing::Level::INFO => native::native_level::Informational.as_int(),
-        tracing::Level::DEBUG => native::native_level::Verbose.as_int(),
-        tracing::Level::TRACE => native::native_level::Verbose.as_int() + 1,
-    }
-}
+pub use layer::LayerBuilder;
 
 #[macro_export]
 macro_rules! etw_event {

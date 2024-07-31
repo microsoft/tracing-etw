@@ -13,7 +13,7 @@ use tracing_subscriber::{registry::LookupSpan, Layer};
 
 use crate::_details::{EtwFilter, EtwLayer};
 use crate::native::{EventWriter, GuidWrapper, ProviderTypes};
-use crate::{map_level, native};
+use crate::native;
 use crate::values::*;
 use crate::statics::*;
 
@@ -21,10 +21,10 @@ pub struct LayerBuilder<Mode>
 where
     Mode: ProviderTypes
 {
-    pub(crate) provider_name: String,
-    pub(crate) provider_id: GuidWrapper,
-    pub(crate) provider_group: Option<Mode::ProviderGroupType>,
-    pub(crate) default_keyword: u64,
+    provider_name: String,
+    provider_id: GuidWrapper,
+    provider_group: Option<Mode::ProviderGroupType>,
+    default_keyword: u64,
     _m: PhantomData<Mode>,
 }
 
@@ -234,7 +234,7 @@ where
         };
 
         if Mode::supports_enable_callback() {
-            if self.provider.enabled(map_level(metadata.level()), keyword) {
+            if self.provider.enabled(metadata.level(), keyword) {
                 tracing::subscriber::Interest::always()
             } else {
                 tracing::subscriber::Interest::never()
@@ -259,7 +259,7 @@ where
         };
 
         self.provider
-            .enabled(map_level(metadata.level()), keyword)
+            .enabled(metadata.level(), keyword)
     }
 
     fn event_enabled(
@@ -275,7 +275,7 @@ where
         };
 
         self.provider
-            .enabled(map_level(event.metadata().level()), keyword)
+            .enabled(event.metadata().level(), keyword)
     }
 }
 
@@ -313,7 +313,7 @@ where
         };
 
         if P::supports_enable_callback() {
-            if self.provider.enabled(map_level(metadata.level()), keyword) {
+            if self.provider.enabled(metadata.level(), keyword) {
                 tracing::subscriber::Interest::always()
             } else {
                 tracing::subscriber::Interest::never()
@@ -338,7 +338,7 @@ where
             self.default_keyword
         };
 
-        self.provider.enabled(map_level(metadata.level()), keyword)
+        self.provider.enabled(metadata.level(), keyword)
     }
 
     #[cfg(feature = "global_filter")]
@@ -355,7 +355,7 @@ where
         };
 
         self.provider
-            .enabled(map_level(event.metadata().level()), keyword)
+            .enabled(event.metadata().level(), keyword)
     }
 
     fn on_event(&self, event: &tracing::Event<'_>, ctx: tracing_subscriber::layer::Context<'_, S>) {
@@ -381,7 +381,7 @@ where
             current_span,
             parent_span,
             name,
-            map_level(event.metadata().level()),
+            event.metadata().level(),
             keyword,
             tag,
             event,
@@ -501,7 +501,7 @@ where
             &data.activity_id,
             &data.related_activity_id,
             &data.fields,
-            map_level(metadata.level()),
+            metadata.level(),
             keyword,
             tag,
         );
@@ -542,7 +542,7 @@ where
             &data.activity_id,
             &data.related_activity_id,
             &data.fields,
-            map_level(metadata.level()),
+            metadata.level(),
             keyword,
             tag,
         );

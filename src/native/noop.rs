@@ -46,7 +46,7 @@ impl crate::native::EventWriter<Provider> for Provider {
     }
 
     #[inline(always)]
-    fn enabled(&self, _level: u8, _keyword: u64) -> bool {
+    fn enabled(&self, _level: &tracing_core::Level, _keyword: u64) -> bool {
         false
     }
 
@@ -57,7 +57,7 @@ impl crate::native::EventWriter<Provider> for Provider {
         _activity_id: &[u8; 16],
         _related_activity_id: &[u8; 16],
         _fields: &'b [crate::values::FieldValueIndex],
-        _level: u8,
+        _level: &tracing_core::Level,
         _keyword: u64,
         _event_tag: u32,
     ) where
@@ -72,7 +72,7 @@ impl crate::native::EventWriter<Provider> for Provider {
         _activity_id: &[u8; 16],
         _related_activity_id: &[u8; 16],
         _fields: &'b [crate::values::FieldValueIndex],
-        _level: u8,
+        _level: &tracing_core::Level,
         _keyword: u64,
         _event_tag: u32,
     ) where
@@ -86,7 +86,7 @@ impl crate::native::EventWriter<Provider> for Provider {
         _current_span: u64,
         _parent_span: u64,
         _event_name: &str,
-        _level: u8,
+        _level: &tracing_core::Level,
         _keyword: u64,
         _event_tag: u32,
         _event: &tracing::Event<'_>,

@@ -108,6 +108,17 @@ impl Provider {
     fn get_provider(self: Pin<&Self>) -> Pin<&tracelogging_dynamic::Provider> {
         unsafe { self.map_unchecked(|s| &s.provider) }
     }
+
+    #[inline]
+    const fn map_level(level: &tracing_core::Level) -> tracelogging::Level {
+        match *level {
+            tracing_core::Level::ERROR => tracelogging::Level::Error,
+            tracing_core::Level::WARN => tracelogging::Level::Warning,
+            tracing_core::Level::INFO => tracelogging::Level::Informational,
+            tracing_core::Level::DEBUG => tracelogging::Level::Verbose,
+            tracing_core::Level::TRACE => tracelogging::Level::from_int(tracelogging::Level::Verbose.as_int() + 1),
+        }
+    }
 }
 
 impl super::EventWriter<Provider> for Provider {
@@ -142,9 +153,9 @@ impl super::EventWriter<Provider> for Provider {
     }
 
     #[inline]
-    fn enabled(&self, level: u8, keyword: u64) -> bool {
+    fn enabled(&self, level: &tracing_core::Level, keyword: u64) -> bool {
         self.provider
-            .enabled(tracelogging::Level::from_int(level), keyword)
+            .enabled(Self::map_level(level), keyword)
     }
 
     fn span_start<'a, 'b, R>(
@@ -154,7 +165,7 @@ impl super::EventWriter<Provider> for Provider {
         activity_id: &[u8; 16],
         related_activity_id: &[u8; 16],
         fields: &'b [crate::values::FieldValueIndex],
-        level: u8,
+        level: &tracing_core::Level,
         keyword: u64,
         event_tag: u32,
     ) where
@@ -165,7 +176,7 @@ impl super::EventWriter<Provider> for Provider {
         EBW.with(|eb| {
             let mut eb = eb.borrow_mut();
 
-            eb.reset(span_name, level.into(), keyword, event_tag);
+            eb.reset(span_name, Self::map_level(level), keyword, event_tag);
             eb.opcode(Opcode::Start);
 
             eb.add_systemtime(
@@ -210,7 +221,7 @@ impl super::EventWriter<Provider> for Provider {
         activity_id: &[u8; 16],
         related_activity_id: &[u8; 16],
         fields: &'b [crate::values::FieldValueIndex],
-        level: u8,
+        level: &tracing_core::Level,
         keyword: u64,
         event_tag: u32,
     ) where
@@ -221,7 +232,7 @@ impl super::EventWriter<Provider> for Provider {
         EBW.with(|eb| {
             let mut eb = eb.borrow_mut();
 
-            eb.reset(span_name, level.into(), keyword, event_tag);
+            eb.reset(span_name, Self::map_level(level), keyword, event_tag);
             eb.opcode(Opcode::Stop);
 
             eb.add_systemtime(
@@ -265,7 +276,7 @@ impl super::EventWriter<Provider> for Provider {
         current_span: u64,
         parent_span: u64,
         event_name: &str,
-        level: u8,
+        level: &tracing_core::Level,
         keyword: u64,
         event_tag: u32,
         event: &tracing::Event<'_>,
@@ -291,7 +302,7 @@ impl super::EventWriter<Provider> for Provider {
         EBW.with(|eb| {
             let mut eb = eb.borrow_mut();
 
-            eb.reset(event_name, level.into(), keyword, event_tag);
+            eb.reset(event_name, Self::map_level(level), keyword, event_tag);
             eb.opcode(Opcode::Info);
 
             eb.add_systemtime(

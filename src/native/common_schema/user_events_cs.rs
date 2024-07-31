@@ -1,4 +1,4 @@
-use crate::{map_level, values::*};
+use crate::values::*;
 use eventheader::*;
 use eventheader_dynamic::EventBuilder;
 use std::{
@@ -92,6 +92,17 @@ impl CommonSchemaProvider {
     fn get_provider(self: Pin<&Self>) -> Pin<&std::sync::RwLock<eventheader_dynamic::Provider>> {
         unsafe { self.map_unchecked(|s| &s.provider) }
     }
+
+    #[inline]
+    const fn map_level(level: &tracing_core::Level) -> eventheader_dynamic::Level {
+        match *level {
+            tracing_core::Level::ERROR => eventheader_dynamic::Level::Error,
+            tracing_core::Level::WARN => eventheader_dynamic::Level::Warning,
+            tracing_core::Level::INFO => eventheader_dynamic::Level::Informational,
+            tracing_core::Level::DEBUG => eventheader_dynamic::Level::Verbose,
+            tracing_core::Level::TRACE => eventheader_dynamic::Level::from_int(eventheader_dynamic::Level::Verbose.as_int() + 1),
+        }
+    }
 }
 
 impl crate::native::EventWriter<CommonSchemaProvider> for CommonSchemaProvider {
@@ -112,45 +123,45 @@ impl crate::native::EventWriter<CommonSchemaProvider> for CommonSchemaProvider {
 
         for event in &*crate::statics::EVENT_METADATA {
             provider.register_set(
-                eventheader_dynamic::Level::from_int(map_level(&tracing::Level::ERROR)),
+                Self::map_level(&tracing::Level::ERROR),
                 event.kw,
             );
             provider.register_set(
-                eventheader_dynamic::Level::from_int(map_level(&tracing::Level::WARN)),
+                Self::map_level(&tracing::Level::WARN),
                 event.kw,
             );
             provider.register_set(
-                eventheader_dynamic::Level::from_int(map_level(&tracing::Level::INFO)),
+                Self::map_level(&tracing::Level::INFO),
                 event.kw,
             );
             provider.register_set(
-                eventheader_dynamic::Level::from_int(map_level(&tracing::Level::DEBUG)),
+                Self::map_level(&tracing::Level::DEBUG),
                 event.kw,
             );
             provider.register_set(
-                eventheader_dynamic::Level::from_int(map_level(&tracing::Level::TRACE)),
+                Self::map_level(&tracing::Level::TRACE),
                 event.kw,
             );
         }
 
         provider.register_set(
-            eventheader_dynamic::Level::from_int(map_level(&tracing::Level::ERROR)),
+            Self::map_level(&tracing::Level::ERROR),
             default_keyword,
         );
         provider.register_set(
-            eventheader_dynamic::Level::from_int(map_level(&tracing::Level::WARN)),
+            Self::map_level(&tracing::Level::WARN),
             default_keyword,
         );
         provider.register_set(
-            eventheader_dynamic::Level::from_int(map_level(&tracing::Level::INFO)),
+            Self::map_level(&tracing::Level::INFO),
             default_keyword,
         );
         provider.register_set(
-            eventheader_dynamic::Level::from_int(map_level(&tracing::Level::DEBUG)),
+            Self::map_level(&tracing::Level::DEBUG),
             default_keyword,
         );
         provider.register_set(
-            eventheader_dynamic::Level::from_int(map_level(&tracing::Level::TRACE)),
+            Self::map_level(&tracing::Level::TRACE),
             default_keyword,
         );
 
@@ -160,12 +171,12 @@ impl crate::native::EventWriter<CommonSchemaProvider> for CommonSchemaProvider {
     }
 
     #[inline]
-    fn enabled(&self, level: u8, keyword: u64) -> bool {
+    fn enabled(&self, level: &tracing_core::Level, keyword: u64) -> bool {
         let es = self
             .provider
             .read()
             .unwrap()
-            .find_set(eventheader_dynamic::Level::from_int(level), keyword);
+            .find_set(Self::map_level(level), keyword);
         if let Some(s) = es { s.enabled() } else { false }
     }
 
@@ -176,7 +187,7 @@ impl crate::native::EventWriter<CommonSchemaProvider> for CommonSchemaProvider {
         _activity_id: &[u8; 16],
         _related_activity_id: &[u8; 16],
         _fields: &'b [crate::values::FieldValueIndex],
-        _level: u8,
+        _level: &tracing_core::Level,
         _keyword: u64,
         _event_tag: u32,
     ) where
@@ -191,7 +202,7 @@ impl crate::native::EventWriter<CommonSchemaProvider> for CommonSchemaProvider {
         _activity_id: &[u8; 16],
         _related_activity_id: &[u8; 16],
         fields: &'b [crate::values::FieldValueIndex],
-        level: u8,
+        level: &tracing_core::Level,
         keyword: u64,
         event_tag: u32,
     ) where
@@ -206,10 +217,10 @@ impl crate::native::EventWriter<CommonSchemaProvider> for CommonSchemaProvider {
             span_id.assume_init()
         };
 
-        let es = if let Some(es) = self.find_set(level.into(), keyword) {
+        let es = if let Some(es) = self.find_set(Self::map_level(level), keyword) {
             es
         } else {
-            self.register_set(level.into(), keyword)
+            self.register_set(Self::map_level(level), keyword)
         };
 
         EBW.with(|eb| {
@@ -307,15 +318,15 @@ impl crate::native::EventWriter<CommonSchemaProvider> for CommonSchemaProvider {
         current_span: u64,
         _parent_span: u64,
         event_name: &str,
-        level: u8,
+        level: &tracing_core::Level,
         keyword: u64,
         event_tag: u32,
         event: &tracing::Event<'_>,
     ) {
-        let es = if let Some(es) = self.find_set(level.into(), keyword) {
+        let es = if let Some(es) = self.find_set(Self::map_level(level), keyword) {
             es
         } else {
-            self.register_set(level.into(), keyword)
+            self.register_set(Self::map_level(level), keyword)
         };
 
         EBW.with(|eb| {

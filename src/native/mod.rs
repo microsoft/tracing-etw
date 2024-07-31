@@ -35,11 +35,6 @@ pub(crate) use tracelogging_dynamic::Guid as native_guid;
 #[cfg(target_os = "linux")]
 pub(crate) use eventheader::Guid as native_guid;
 
-#[cfg(not(target_os = "linux"))]
-pub(crate) use tracelogging_dynamic::Level as native_level;
-#[cfg(target_os = "linux")]
-pub(crate) use eventheader::Level as native_level;
-
 #[doc(hidden)]
 pub struct GuidWrapper(u128);
 
@@ -100,7 +95,7 @@ pub trait EventWriter<Mode: ProviderTypes> {
     where
         for<'a> &'a G: Into<GuidWrapper>;
 
-    fn enabled(&self, level: u8, keyword: u64) -> bool;
+    fn enabled(&self, level: &tracing_core::Level, keyword: u64) -> bool;
 
     #[allow(clippy::too_many_arguments)]
     fn span_start<'a, 'b, R>(
@@ -110,7 +105,7 @@ pub trait EventWriter<Mode: ProviderTypes> {
         activity_id: &[u8; 16],
         related_activity_id: &[u8; 16],
         fields: &'b [crate::values::FieldValueIndex],
-        level: u8,
+        level: &tracing_core::Level,
         keyword: u64,
         event_tag: u32,
     ) where
@@ -124,7 +119,7 @@ pub trait EventWriter<Mode: ProviderTypes> {
         activity_id: &[u8; 16],
         related_activity_id: &[u8; 16],
         fields: &'b [crate::values::FieldValueIndex],
-        level: u8,
+        level: &tracing_core::Level,
         keyword: u64,
         event_tag: u32,
     ) where
@@ -137,7 +132,7 @@ pub trait EventWriter<Mode: ProviderTypes> {
         current_span: u64,
         parent_span: u64,
         event_name: &str,
-        level: u8,
+        level: &tracing_core::Level,
         keyword: u64,
         event_tag: u32,
         event: &tracing::Event<'_>,

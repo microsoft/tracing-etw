@@ -66,6 +66,17 @@ impl CommonSchemaProvider {
     fn get_provider(self: Pin<&Self>) -> Pin<&tracelogging_dynamic::Provider> {
         unsafe { self.map_unchecked(|s| &s.provider) }
     }
+
+    #[inline]
+    const fn map_level(level: &tracing_core::Level) -> tracelogging::Level {
+        match *level {
+            tracing_core::Level::ERROR => tracelogging::Level::Error,
+            tracing_core::Level::WARN => tracelogging::Level::Warning,
+            tracing_core::Level::INFO => tracelogging::Level::Informational,
+            tracing_core::Level::DEBUG => tracelogging::Level::Verbose,
+            tracing_core::Level::TRACE => tracelogging::Level::from_int(tracelogging::Level::Verbose.as_int() + 1),
+        }
+    }
 }
 
 impl crate::native::ProviderTypes for CommonSchemaProvider {
@@ -114,9 +125,9 @@ impl crate::native::EventWriter<CommonSchemaProvider> for CommonSchemaProvider {
     }
 
     #[inline]
-    fn enabled(&self, level: u8, keyword: u64) -> bool {
+    fn enabled(&self, level: &tracing_core::Level, keyword: u64) -> bool {
         self.provider
-            .enabled(tracelogging::Level::from_int(level), keyword)
+            .enabled(Self::map_level(level), keyword)
     }
 
     fn span_start<'a, 'b, R>(
@@ -126,7 +137,7 @@ impl crate::native::EventWriter<CommonSchemaProvider> for CommonSchemaProvider {
         _activity_id: &[u8; 16],
         _related_activity_id: &[u8; 16],
         _fields: &'b [crate::values::FieldValueIndex],
-        _level: u8,
+        _level: &tracing_core::Level,
         _keyword: u64,
         _event_tag: u32,
     ) where
@@ -141,7 +152,7 @@ impl crate::native::EventWriter<CommonSchemaProvider> for CommonSchemaProvider {
         _activity_id: &[u8; 16],
         _related_activity_id: &[u8; 16],
         fields: &'b [crate::values::FieldValueIndex],
-        level: u8,
+        level: &tracing_core::Level,
         keyword: u64,
         event_tag: u32,
     ) where
@@ -159,7 +170,7 @@ impl crate::native::EventWriter<CommonSchemaProvider> for CommonSchemaProvider {
         EBW.with(|eb| {
             let mut eb = eb.borrow_mut();
 
-            eb.reset(span_name, level.into(), keyword, event_tag);
+            eb.reset(span_name, Self::map_level(level), keyword, event_tag);
             eb.opcode(Opcode::Info);
 
             // Promoting values from PartC to PartA extensions is apparently just a draft spec
@@ -251,7 +262,7 @@ impl crate::native::EventWriter<CommonSchemaProvider> for CommonSchemaProvider {
         current_span: u64,
         _parent_span: u64,
         event_name: &str,
-        level: u8,
+        level: &tracing_core::Level,
         keyword: u64,
         event_tag: u32,
         event: &tracing::Event<'_>,
@@ -259,7 +270,7 @@ impl crate::native::EventWriter<CommonSchemaProvider> for CommonSchemaProvider {
         EBW.with(|eb| {
             let mut eb = eb.borrow_mut();
 
-            eb.reset(event_name, level.into(), keyword, event_tag);
+            eb.reset(event_name, Self::map_level(level), keyword, event_tag);
             eb.opcode(Opcode::Info);
 
             // Promoting values from PartC to PartA extensions is apparently just a draft spec

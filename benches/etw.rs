@@ -10,7 +10,7 @@ use tracing_subscriber::{self, prelude::*};
 #[cfg(target_os = "windows")]
 pub fn etw_benchmark(c: &mut Criterion) {
     let builder = LayerBuilder::new("etw_bench");
-    let provider_id = builder.get_provider_id().to_u128();
+    let provider_id = builder.get_provider_id();
     let _subscriber = tracing_subscriber::registry().with(builder.build()).init();
 
     let etw_session = SessionBuilder::new_file_mode(
@@ -42,7 +42,7 @@ pub fn etw_benchmark(c: &mut Criterion) {
     }
 
     session
-        .enable_provider(&windows::core::GUID::from_u128(provider_id), 0xFF)
+        .enable_provider(&provider_id.into(), 0xFF)
         .expect("can't enable provider to session");
 
     // Spans

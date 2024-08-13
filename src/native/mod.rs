@@ -62,6 +62,12 @@ impl From<GuidWrapper> for native_guid {
     }
 }
 
+impl From<&GuidWrapper> for u128 {
+    fn from(value: &GuidWrapper) -> Self {
+        value.0
+    }
+}
+
 impl GuidWrapper {
     pub fn from_name(name: &str) -> Self {
         Self(native_guid::from_name(name).to_u128())

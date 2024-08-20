@@ -39,7 +39,7 @@ tracing = {version = "0.1", default-features = false, features = ["std", "attrib
 
 [target.'cfg(windows)'.dev-dependencies]
 windows = {version="0.58", features=["Win32_System_Diagnostics_Etw", "Win32_Foundation", "Win32_System_Time"]}
-etw_helpers = {version="0.1", path="../etw_helpers"}
+#etw_helpers = {version="0.1", path="../etw_helpers"}
 
 [[bench]]
 name = "etw"

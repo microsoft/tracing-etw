@@ -63,13 +63,17 @@
 //! Keywords are a fundamental part of efficient event filtering in ETW,
 //! and naming events make them easier to understand in tools like WPA.
 //! It is highly recommended that every event have a non-zero keyword;
-//! the [default_keyword] function can set the default keyword assigned
+//! the [LayerBuilder::with_default_keyword] function can set the default keyword assigned
 //! to every event logged through the `tracing` macros (e.g. `event!`).
 //! 
 //! This extra information is stored as static metadata in the final
 //! compiled binary, and relies on linker support to work properly.
 //! It has been tested with Microsoft's, GCC's, and LLVM's linker.
 //! 
+
+// only enables the `doc_cfg` feature when
+// the `docsrs` configuration attribute is defined
+#![cfg_attr(docsrs, feature(doc_cfg))]
 
 mod layer;
 // Module that abstracts the native ETW and Linux user_events APIs, depending on the target platform.

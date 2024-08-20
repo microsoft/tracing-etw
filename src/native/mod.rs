@@ -36,6 +36,7 @@ pub(crate) use tracelogging_dynamic::Guid as native_guid;
 pub(crate) use eventheader::Guid as native_guid;
 
 #[doc(hidden)]
+#[derive(Copy, Clone)]
 pub struct GuidWrapper(u128);
 
 impl From<&native_guid> for GuidWrapper {
@@ -68,9 +69,19 @@ impl From<&GuidWrapper> for u128 {
     }
 }
 
+impl AsRef<u128> for GuidWrapper {
+    fn as_ref(&self) -> &u128 {
+        &self.0
+    }
+}
+
 impl GuidWrapper {
     pub fn from_name(name: &str) -> Self {
         Self(native_guid::from_name(name).to_u128())
+    }
+
+    pub fn to_u128(&self) -> u128 {
+        self.0
     }
 }
 

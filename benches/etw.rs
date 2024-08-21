@@ -42,7 +42,7 @@ pub fn etw_benchmark(c: &mut Criterion) {
     }
 
     session
-        .enable_provider(&provider_id.into(), 0xFF)
+        .enable_provider(&provider_id.to_u128().into(), 0xFF)
         .expect("can't enable provider to session");
 
     // Spans

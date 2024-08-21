@@ -28,7 +28,7 @@ where
 
 // This struct needs to be public as it implements the tracing_subscriber::Layer::Filter trait.
 #[doc(hidden)]
-#[cfg(not(feature = "global_filter"))]
+#[cfg(any(not(feature = "global_filter"), docsrs))]
 pub struct EtwFilter<S, Mode: ProviderTypes>
 where
     Mode::Provider: crate::native::EventWriter<Mode> + 'static

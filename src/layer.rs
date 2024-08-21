@@ -1,5 +1,6 @@
 use std::marker::PhantomData;
 use std::time::SystemTime;
+#[allow(unused_imports)]
 use std::{pin::Pin, sync::Arc};
 
 #[allow(unused_imports)] // Many imports are used exclusively by feature-gated code
@@ -11,12 +12,29 @@ use tracing_subscriber::filter::{combinator::And, FilterExt, Filtered, Targets};
 use tracing_subscriber::layer::Filter;
 use tracing_subscriber::{registry::LookupSpan, Layer};
 
-use crate::_details::{EtwFilter, EtwLayer};
+#[cfg(any(not(feature = "global_filter"), docsrs))]
+use crate::_details::EtwFilter;
+use crate::_details::EtwLayer;
 use crate::native::{EventWriter, GuidWrapper, ProviderTypes};
 use crate::native;
 use crate::values::*;
 use crate::statics::*;
 
+/// Builds a [tracing_subscriber::Layer] that will logs events from a single
+/// ETW or user_events provider. Use [LayerBuilder::new] to construct a new
+/// builder for the given provider name. Use the `with_*` methods to set
+/// additional properties for the provider, such as the keyword to use
+/// for events (default: 1) or a specific provider GUID (default: a hash of
+/// the provider name).
+/// 
+/// Use [LayerBuilder::new_common_schema_events] to create a layer that
+/// will log events in the Common Schema 4.0 mapping. Only use this if
+/// you know that you need events in this format.
+/// 
+/// Multiple `tracing_etw` layers can be created at the same time,
+/// with different provider names/IDs, keywords, or output formats.
+/// (Target filters)[tracing_subscriber::filter] can then be used to direct
+/// specific events to specific layers.
 pub struct LayerBuilder<Mode>
 where
     Mode: ProviderTypes
@@ -48,7 +66,7 @@ impl LayerBuilder<native::common_schema::Provider> {
     /// Most ETW consumers will not benefit from events in this schema, and
     /// may perform worse. Common Schema events are much slower to generate
     /// and should not be enabled unless absolutely necessary.
-    #[cfg(feature = "common_schema")]
+    #[cfg(any(feature = "common_schema", docsrs))]
     pub fn new_common_schema_events(
         name: &str,
     ) -> LayerBuilder<native::common_schema::Provider> {
@@ -80,10 +98,21 @@ where
     /// Get the current provider ID that will be used for the ETW provider.
     /// This is a convenience function to help with tools that do not implement
     /// the standard provider name to ID algorithm.
-    pub fn get_provider_id(&self) -> &GuidWrapper {
-        &self.provider_id
+    pub fn get_provider_id(&self) -> GuidWrapper {
+        self.provider_id.clone()
     }
 
+
+    /// Set the keyword used for events that do not explicitly set a keyword.
+    /// 
+    /// Events logged with the [crate::etw_event!] macro specify a keyword for the event.
+    /// Events and spans logged with the [tracing::event!], [tracing::span!],
+    /// or other similar `tracing` macros will use the default keyword.
+    /// 
+    /// If this method is not called, the default keyword will be `1`.
+    /// 
+    /// Keyword value `0` is special in ETW (but not user_events), and should
+    /// not be used.
     pub fn with_default_keyword(mut self, kw: u64) -> Self {
         self.default_keyword = kw;
         self
@@ -116,7 +145,7 @@ where
         }
     }
 
-    #[cfg(not(feature = "global_filter"))]
+    #[cfg(any(not(feature = "global_filter"), docsrs))]
     fn build_target_filter(&self, target: &'static str) -> Targets {
         let mut targets = Targets::new().with_target(&self.provider_name, LevelFilter::TRACE);
 
@@ -166,8 +195,41 @@ where
         }
     }
 
+    #[cfg_attr(docsrs, doc(cfg(feature = "global_filter")))]
+    #[cfg(any(feature = "global_filter", docsrs))]
+    pub fn build<S>(self) -> EtwLayer<S, Mode>
+    where
+        S: Subscriber + for<'a> LookupSpan<'a>,
+        Mode::Provider: EventWriter<Mode> + 'static,
+    {
+        self.validate_config();
+
+        self.build_layer()
+    }
+
     #[allow(clippy::type_complexity)]
-    #[cfg(not(feature = "global_filter"))]
+    #[cfg_attr(docsrs, doc(cfg(not(feature = "global_filter"))))]
+    #[cfg(any(not(feature = "global_filter"), docsrs))]
+    pub fn build<S>(self) -> Filtered<EtwLayer<S, Mode>, EtwFilter<S, Mode>, S>
+    where
+        S: Subscriber + for<'a> LookupSpan<'a>,
+        Mode::Provider: EventWriter<Mode> + 'static,
+    {
+        self.validate_config();
+
+        let layer = self.build_layer();
+
+        let filter = self.build_filter(layer.provider.clone());
+
+        layer.with_filter(filter)
+    }
+
+    /// Constructs the configured layer with a target [tracing_subscriber::filter] applied.
+    /// This can be used to target specific events to specific layers, and in effect allow
+    /// specific events to be logged only from specific ETW/user_event providers.
+    #[allow(clippy::type_complexity)]
+    #[cfg_attr(docsrs, doc(cfg(not(feature = "global_filter"))))]
+    #[cfg(any(not(feature = "global_filter"), docsrs))]
     pub fn build_with_target<S>(
         self,
         target: &'static str,
@@ -186,36 +248,9 @@ where
 
         layer.with_filter(filter.and(targets))
     }
-
-    #[cfg(feature = "global_filter")]
-    pub fn build<S>(self) -> EtwLayer<S, Mode::Provider>
-    where
-        S: Subscriber + for<'a> LookupSpan<'a>,
-        Mode::Provider: EventWriter + 'static,
-    {
-        self.validate_config();
-
-        self.build_layer()
-    }
-
-    #[allow(clippy::type_complexity)]
-    #[cfg(not(feature = "global_filter"))]
-    pub fn build<S>(self) -> Filtered<EtwLayer<S, Mode>, EtwFilter<S, Mode>, S>
-    where
-        S: Subscriber + for<'a> LookupSpan<'a>,
-        Mode::Provider: EventWriter<Mode> + 'static,
-    {
-        self.validate_config();
-
-        let layer = self.build_layer();
-
-        let filter = self.build_filter(layer.provider.clone());
-
-        layer.with_filter(filter)
-    }
 }
 
-#[cfg(not(feature = "global_filter"))]
+#[cfg(any(not(feature = "global_filter"), docsrs))]
 impl<S, Mode> Filter<S> for EtwFilter<S, Mode>
 where
     S: Subscriber + for<'a> LookupSpan<'a>,
@@ -300,7 +335,7 @@ where
         // Late init when the layer is attached to a subscriber
     }
 
-    #[cfg(feature = "global_filter")]
+    #[cfg(any(feature = "global_filter", docsrs))]
     fn register_callsite(
         &self,
         metadata: &'static tracing::Metadata<'static>,
@@ -312,7 +347,7 @@ where
             self.default_keyword
         };
 
-        if P::supports_enable_callback() {
+        if Mode::supports_enable_callback() {
             if self.provider.enabled(metadata.level(), keyword) {
                 tracing::subscriber::Interest::always()
             } else {
@@ -325,7 +360,7 @@ where
         }
     }
 
-    #[cfg(feature = "global_filter")]
+    #[cfg(any(feature = "global_filter", docsrs))]
     fn enabled(
         &self,
         metadata: &tracing::Metadata<'_>,
@@ -341,7 +376,7 @@ where
         self.provider.enabled(metadata.level(), keyword)
     }
 
-    #[cfg(feature = "global_filter")]
+    #[cfg(any(feature = "global_filter", docsrs))]
     fn event_enabled(
         &self,
         event: &tracing::Event<'_>,

@@ -29,7 +29,9 @@ impl crate::native::ProviderTypes for Provider {
         false
     }
 
-    fn assert_valid(_: &Self::ProviderGroupType) {}
+    fn is_valid(value: &Self::ProviderGroupType) -> Result<(), EtwError> {
+        Ok(())
+    }
 }
 
 impl crate::native::EventWriter<Provider> for Provider {

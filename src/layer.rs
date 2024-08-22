@@ -12,11 +12,9 @@ use tracing_subscriber::filter::{combinator::And, FilterExt, Filtered, Targets};
 use tracing_subscriber::layer::Filter;
 use tracing_subscriber::{registry::LookupSpan, Layer};
 
-#[cfg(any(not(feature = "global_filter"), docsrs))]
-use crate::_details::EtwFilter;
-use crate::_details::EtwLayer;
+use crate::_details::{EtwFilter, EtwLayer};
 use crate::native::{EventWriter, GuidWrapper, ProviderTypes};
-use crate::native;
+use crate::{error::EtwError, native};
 use crate::values::*;
 use crate::statics::*;
 
@@ -128,12 +126,7 @@ where
         self
     }
 
-    fn validate_config(&self) {
-        match &self.provider_group {
-            None => (),
-            Some(value) => Mode::assert_valid(value)
-        }
-
+    fn validate_config(&self) -> Result<(), EtwError> {
         #[cfg(target_os = "linux")]
         if self
             .provider_name
@@ -141,11 +134,15 @@ where
         {
             // The perf command is very particular about the provider names it accepts.
             // The Linux kernel itself cares less, and other event consumers should also presumably not need this check.
-            //panic!("Linux provider names must be ASCII alphanumeric");
+            return Err(EtwError::InvalidProviderNameCharacters(self.provider_name.clone()));
+        }
+
+        match &self.provider_group {
+            None => Ok(()),
+            Some(value) => Mode::is_valid(value)
         }
     }
 
-    #[cfg(any(not(feature = "global_filter"), docsrs))]
     fn build_target_filter(&self, target: &'static str) -> Targets {
         let mut targets = Targets::new().with_target(&self.provider_name, LevelFilter::TRACE);
 
@@ -181,7 +178,6 @@ where
         }
     }
 
-    #[cfg(not(feature = "global_filter"))]
     fn build_filter<S>(&self, provider: Pin<Arc<Mode::Provider>>) -> EtwFilter<S, Mode>
     where
         S: Subscriber + for<'a> LookupSpan<'a>,
@@ -195,50 +191,44 @@ where
         }
     }
 
-    #[cfg_attr(docsrs, doc(cfg(feature = "global_filter")))]
-    #[cfg(any(feature = "global_filter", docsrs))]
-    pub fn build<S>(self) -> EtwLayer<S, Mode>
+    pub fn build_global_filter<S>(self) -> Result<EtwLayer<S, Mode>, EtwError>
     where
         S: Subscriber + for<'a> LookupSpan<'a>,
         Mode::Provider: EventWriter<Mode> + 'static,
     {
-        self.validate_config();
+        self.validate_config()?;
 
-        self.build_layer()
+        Ok(self.build_layer())
     }
 
     #[allow(clippy::type_complexity)]
-    #[cfg_attr(docsrs, doc(cfg(not(feature = "global_filter"))))]
-    #[cfg(any(not(feature = "global_filter"), docsrs))]
-    pub fn build<S>(self) -> Filtered<EtwLayer<S, Mode>, EtwFilter<S, Mode>, S>
+    pub fn build<S>(self) -> Result<Filtered<EtwLayer<S, Mode>, EtwFilter<S, Mode>, S>, EtwError>
     where
         S: Subscriber + for<'a> LookupSpan<'a>,
         Mode::Provider: EventWriter<Mode> + 'static,
     {
-        self.validate_config();
+        self.validate_config()?;
 
         let layer = self.build_layer();
 
         let filter = self.build_filter(layer.provider.clone());
 
-        layer.with_filter(filter)
+        Ok(layer.with_filter(filter))
     }
 
     /// Constructs the configured layer with a target [tracing_subscriber::filter] applied.
     /// This can be used to target specific events to specific layers, and in effect allow
     /// specific events to be logged only from specific ETW/user_event providers.
     #[allow(clippy::type_complexity)]
-    #[cfg_attr(docsrs, doc(cfg(not(feature = "global_filter"))))]
-    #[cfg(any(not(feature = "global_filter"), docsrs))]
     pub fn build_with_target<S>(
         self,
         target: &'static str,
-    ) -> Filtered<EtwLayer<S, Mode>, And<EtwFilter<S, Mode>, Targets, S>, S>
+    ) -> Result<Filtered<EtwLayer<S, Mode>, And<EtwFilter<S, Mode>, Targets, S>, S>, EtwError>
     where
         S: Subscriber + for<'a> LookupSpan<'a>,
         Mode::Provider: EventWriter<Mode> + 'static,
     {
-        self.validate_config();
+        self.validate_config()?;
 
         let layer = self.build_layer();
 
@@ -246,11 +236,10 @@ where
 
         let targets = self.build_target_filter(target);
 
-        layer.with_filter(filter.and(targets))
+        Ok(layer.with_filter(filter.and(targets)))
     }
 }
 
-#[cfg(any(not(feature = "global_filter"), docsrs))]
 impl<S, Mode> Filter<S> for EtwFilter<S, Mode>
 where
     S: Subscriber + for<'a> LookupSpan<'a>,
@@ -335,7 +324,6 @@ where
         // Late init when the layer is attached to a subscriber
     }
 
-    #[cfg(any(feature = "global_filter", docsrs))]
     fn register_callsite(
         &self,
         metadata: &'static tracing::Metadata<'static>,
@@ -360,7 +348,6 @@ where
         }
     }
 
-    #[cfg(any(feature = "global_filter", docsrs))]
     fn enabled(
         &self,
         metadata: &tracing::Metadata<'_>,
@@ -376,7 +363,6 @@ where
         self.provider.enabled(metadata.level(), keyword)
     }
 
-    #[cfg(any(feature = "global_filter", docsrs))]
     fn event_enabled(
         &self,
         event: &tracing::Event<'_>,

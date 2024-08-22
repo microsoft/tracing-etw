@@ -9,7 +9,7 @@ fn test_function(x: u32, y: f64) -> f64 {
 
 fn main() {
     tracing_subscriber::registry()
-        .with(LayerBuilder::new("ExampleProvInstrument").build()) // Collects everything
+        .with(LayerBuilder::new("ExampleProvInstrument").build().unwrap()) // Collects everything
         .with(tracing_subscriber::fmt::layer().with_span_events(FmtSpan::ACTIVE))
         .init();
 

@@ -48,7 +48,7 @@
 //! use tracing_subscriber::{self, prelude::*};
 //! 
 //! tracing_subscriber::registry()
-//!     .with(tracing_etw::LayerBuilder::new("SampleProviderName").build())
+//!     .with(tracing_etw::LayerBuilder::new("SampleProviderName").build().unwrap())
 //!     .init();
 //!
 //! event!(Level::INFO, fieldB = b'x', fieldA = 7, "Event Message!");
@@ -85,6 +85,7 @@ mod statics;
 // Module holding internal details that need to be public but should not be directly used by consumers of the crate.
 #[doc(hidden)]
 pub mod _details;
+pub mod error;
 
 pub use layer::LayerBuilder;
 

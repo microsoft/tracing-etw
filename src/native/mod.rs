@@ -35,6 +35,8 @@ pub(crate) use tracelogging_dynamic::Guid as native_guid;
 #[cfg(target_os = "linux")]
 pub(crate) use eventheader::Guid as native_guid;
 
+use crate::error::EtwError;
+
 #[doc(hidden)]
 #[derive(Copy, Clone)]
 pub struct GuidWrapper(u128);
@@ -92,7 +94,7 @@ pub trait ProviderTypes {
 
     fn supports_enable_callback() -> bool;
 
-    fn assert_valid(value: &Self::ProviderGroupType);
+    fn is_valid(value: &Self::ProviderGroupType) -> Result<(), EtwError>;
 
     // The compiler can't see through a 'type' within a trait to tell
     // that it trivially matches a constraint unless we lower the constraint

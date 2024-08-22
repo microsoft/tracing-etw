@@ -4,7 +4,7 @@ use tracing_subscriber::{self, fmt::format::FmtSpan, prelude::*};
 
 fn main() {
     tracing_subscriber::registry()
-        .with(LayerBuilder::new_common_schema_events("ExampleProvSpan_CS").build())
+        .with(LayerBuilder::new_common_schema_events("ExampleProvSpan_CS").build().unwrap())
         .with(tracing_subscriber::fmt::layer().with_span_events(FmtSpan::ACTIVE))
         .init();
 

@@ -128,13 +128,24 @@ where
 
     fn validate_config(&self) -> Result<(), EtwError> {
         #[cfg(target_os = "linux")]
-        if self
-            .provider_name
-            .contains(|f: char| !f.is_ascii_alphanumeric())
         {
-            // The perf command is very particular about the provider names it accepts.
-            // The Linux kernel itself cares less, and other event consumers should also presumably not need this check.
-            return Err(EtwError::InvalidProviderNameCharacters(self.provider_name.clone()));
+            if self
+                .provider_name
+                .contains(|f: char| !f.is_ascii_alphanumeric() && f != '_')
+            {
+                // The perf command is very particular about the provider names it accepts.
+                // The Linux kernel itself cares less, and other event consumers should also presumably not need this check.
+                return Err(EtwError::InvalidProviderNameCharacters(self.provider_name.clone()));
+            }
+
+            let group_name_len = match &self.provider_group {
+                None => 0,
+                Some(ref name) => Mode::get_provider_group(&name).as_ref().len()
+            };
+
+            if self.provider_name.len() + group_name_len >= 234 {
+                return Err(EtwError::TooManyCharacters(self.provider_name.len() + group_name_len));
+            }
         }
 
         match &self.provider_group {
@@ -150,7 +161,7 @@ where
         match self.provider_group {
             None => {}
             Some(ref name) => {
-                targets = targets.with_target(Mode::get_provider_group(name), LevelFilter::TRACE);
+                targets = targets.with_target(Mode::get_provider_group(name).as_ref(), LevelFilter::TRACE);
             }
         }
 

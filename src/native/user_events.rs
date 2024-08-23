@@ -75,7 +75,7 @@ impl crate::native::ProviderTypes for Provider {
         }
     }
 
-    fn get_provider_group(value: &Self::ProviderGroupType) -> impl Into<String> {
+    fn get_provider_group(value: &Self::ProviderGroupType) -> impl AsRef<str> {
         value.clone()
     }
 }

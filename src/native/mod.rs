@@ -100,7 +100,7 @@ pub trait ProviderTypes {
     // that it trivially matches a constraint unless we lower the constraint
     // checking into the impl, done here through constraint on the return type.
     #[cfg(target_os = "linux")]
-    fn get_provider_group(value: &Self::ProviderGroupType) -> impl Into<String>;
+    fn get_provider_group(value: &Self::ProviderGroupType) -> impl AsRef<str>;
 }
 
 #[doc(hidden)]

@@ -12,6 +12,7 @@ authors = ["Kyle Sabo", "Microsoft"]
 crate-type = ["rlib"]
 
 [features]
+global_filter = []
 common_schema = []
 default = ["common_schema"]
 

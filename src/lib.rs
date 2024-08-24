@@ -75,7 +75,7 @@
 // the `docsrs` configuration attribute is defined
 #![cfg_attr(docsrs, feature(doc_cfg))]
 
-mod layer;
+mod layer_builder;
 // Module that abstracts the native ETW and Linux user_events APIs, depending on the target platform.
 // Consumers of the crate should not need to use this module directly.
 #[doc(hidden)]
@@ -87,7 +87,9 @@ mod statics;
 pub mod _details;
 pub mod error;
 
-pub use layer::LayerBuilder;
+pub use layer_builder::LayerBuilder;
+
+mod layer;
 
 #[macro_export]
 macro_rules! etw_event {

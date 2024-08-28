@@ -4,8 +4,8 @@ use tracing_subscriber::{self, fmt::format::FmtSpan, prelude::*};
 
 fn main() {
     tracing_subscriber::registry()
-        .with(LayerBuilder::new("ExampleProvBasic").build()) // Collects everything
-        .with(LayerBuilder::new_common_schema_events("ExampleProvBasic_CS").build_with_target("geneva"))
+        .with(LayerBuilder::new("ExampleProvBasic").build().unwrap()) // Collects everything
+        .with(LayerBuilder::new_common_schema_events("ExampleProvBasic_CS").build_with_target("geneva").unwrap())
         .with(tracing_subscriber::fmt::layer().with_span_events(FmtSpan::ACTIVE))
         .init();
 

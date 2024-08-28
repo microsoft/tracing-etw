@@ -4,7 +4,7 @@ use tracing_subscriber::{self, prelude::*};
 
 fn main() {
     tracing_subscriber::registry()
-        .with(LayerBuilder::new("ExampleProvEtwEventStress").build())
+        .with(LayerBuilder::new("ExampleProvEtwEventStress").build().unwrap())
         .init();
 
     for i in 0..500000 {

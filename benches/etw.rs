@@ -11,7 +11,7 @@ use tracing_subscriber::{self, prelude::*};
 pub fn etw_benchmark(c: &mut Criterion) {
     let builder = LayerBuilder::new("etw_bench");
     let provider_id = builder.get_provider_id();
-    let _subscriber = tracing_subscriber::registry().with(builder.build()).init();
+    let _subscriber = tracing_subscriber::registry().with(builder.build().unwrap()).init();
 
     let etw_session = SessionBuilder::new_file_mode(
         "tokio-tracing-etw-bench",

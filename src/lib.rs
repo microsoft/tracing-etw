@@ -48,7 +48,7 @@
 //! use tracing_subscriber::{self, prelude::*};
 //! 
 //! tracing_subscriber::registry()
-//!     .with(tracing_etw::LayerBuilder::new("SampleProviderName").build())
+//!     .with(tracing_etw::LayerBuilder::new("SampleProviderName").build().unwrap())
 //!     .init();
 //!
 //! event!(Level::INFO, fieldB = b'x', fieldA = 7, "Event Message!");
@@ -75,7 +75,7 @@
 // the `docsrs` configuration attribute is defined
 #![cfg_attr(docsrs, feature(doc_cfg))]
 
-mod layer;
+mod layer_builder;
 // Module that abstracts the native ETW and Linux user_events APIs, depending on the target platform.
 // Consumers of the crate should not need to use this module directly.
 #[doc(hidden)]
@@ -85,8 +85,11 @@ mod statics;
 // Module holding internal details that need to be public but should not be directly used by consumers of the crate.
 #[doc(hidden)]
 pub mod _details;
+pub mod error;
 
-pub use layer::LayerBuilder;
+pub use layer_builder::LayerBuilder;
+
+mod layer;
 
 #[macro_export]
 macro_rules! etw_event {

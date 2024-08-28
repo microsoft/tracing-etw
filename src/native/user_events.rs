@@ -1,5 +1,6 @@
 use crate::values::*;
 use crate::statics::GLOBAL_ACTIVITY_SEED;
+use crate::error::EtwError;
 use eventheader::*;
 use eventheader_dynamic::EventBuilder;
 use std::{cell::RefCell, ops::DerefMut, pin::Pin, sync::Arc, time::SystemTime};
@@ -64,14 +65,17 @@ impl crate::native::ProviderTypes for Provider {
         false
     }
 
-    fn assert_valid(value: &Self::ProviderGroupType) {
-        assert!(
-            eventheader_dynamic::ProviderOptions::is_valid_option_value(value),
-            "Provider group names must be lower case ASCII or numeric digits"
-        );
+    fn is_valid(value: &Self::ProviderGroupType) -> Result<(), EtwError> {
+        if !eventheader_dynamic::ProviderOptions::is_valid_option_value(value) {
+            Err(EtwError::InvalidProviderGroupCharacters(value.clone().into()))
+        }
+        else
+        {
+            Ok(())
+        }
     }
 
-    fn get_provider_group(value: &Self::ProviderGroupType) -> impl Into<String> {
+    fn get_provider_group(value: &Self::ProviderGroupType) -> impl AsRef<str> {
         value.clone()
     }
 }

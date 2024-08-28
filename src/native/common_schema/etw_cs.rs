@@ -1,4 +1,4 @@
-use crate::values::*;
+use crate::{error::EtwError, values::*};
 use std::{
     cell::RefCell,
     io::{Cursor, Write},
@@ -88,8 +88,13 @@ impl crate::native::ProviderTypes for CommonSchemaProvider {
         true
     }
 
-    fn assert_valid(value: &Self::ProviderGroupType) {
-        assert_ne!(value, &tracelogging_dynamic::Guid::zero(), "Provider group GUID must not be zeroes");
+    fn is_valid(value: &Self::ProviderGroupType) -> Result<(), EtwError> {
+        if value == &crate::native::native_guid::zero() {
+            Err(EtwError::EmptyProviderGroupGuid)
+        }
+        else {
+            Ok(())
+        }
     }
 }
 

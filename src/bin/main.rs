@@ -1,3 +1,5 @@
+#![allow(unused_imports)]
+
 use tracing::{event, span, Level};
 use tracing_etw::{etw_event, LayerBuilder};
 use tracing_subscriber::{self, fmt::format::FmtSpan, prelude::*};
@@ -8,11 +10,19 @@ use tracing_subscriber::{self, fmt::format::FmtSpan, prelude::*};
 // }
 
 fn main() {
-    tracing_subscriber::registry()
-        .with(LayerBuilder::new("test").build()) // Collects everything
-        .with(LayerBuilder::new_common_schema_events("test2").build_with_target("geneva"))
-        .with(tracing_subscriber::fmt::layer().with_span_events(FmtSpan::ACTIVE))
-        .init();
+    let registry = tracing_subscriber::registry();
+
+    #[cfg(not(feature = "global_filter"))]
+    let registry = registry.with(LayerBuilder::new("test").build().unwrap());
+    #[cfg(all(not(feature = "global_filter"), feature = "common_schema"))]
+    let registry = registry.with(LayerBuilder::new_common_schema_events("test2").build_with_target("geneva").unwrap());
+    #[cfg(not(feature = "global_filter"))]
+    let registry = registry.with(tracing_subscriber::fmt::layer().with_span_events(FmtSpan::ACTIVE));
+    
+    #[cfg(feature = "global_filter")]
+    let registry = registry.with(LayerBuilder::new("test").build_global_filter().unwrap());
+
+    registry.init();
 
     #[allow(non_snake_case)]
     let fieldB = "asdf";

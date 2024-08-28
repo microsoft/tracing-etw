@@ -1,4 +1,4 @@
-use crate::values::*;
+use crate::{error::EtwError, values::*};
 use crate::statics::GLOBAL_ACTIVITY_SEED;
 use chrono::{Datelike, Timelike};
 use std::{cell::RefCell, ops::DerefMut, pin::Pin, sync::Arc, time::SystemTime};
@@ -98,8 +98,13 @@ impl crate::native::ProviderTypes for Provider {
         true
     }
 
-    fn assert_valid(value: &Self::ProviderGroupType) {
-        assert_ne!(value, &crate::native::native_guid::zero(), "Provider group GUID must not be zeroes");
+    fn is_valid(value: &Self::ProviderGroupType) -> Result<(), EtwError> {
+        if value == &crate::native::native_guid::zero() {
+            Err(EtwError::EmptyProviderGroupGuid)
+        }
+        else {
+            Ok(())
+        }
     }
 }
 

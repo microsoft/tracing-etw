@@ -21,7 +21,7 @@ struct Win32SystemTime {
 
 impl From<std::time::SystemTime> for Win32SystemTime {
     fn from(value: std::time::SystemTime) -> Self {
-        let dt = chrono::DateTime::from(value);
+        let dt: chrono::DateTime<chrono::Utc> = chrono::DateTime::from(value);
 
         Win32SystemTime {
             st: [

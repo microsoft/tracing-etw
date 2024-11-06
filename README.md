@@ -8,6 +8,14 @@
 [![Build Status][actions-badge]][actions-url]
 ![maintenance status][maint-badge]
 
+# Overview
+
+This layer emits tracing events as Windows ETW events or Linux user-mode tracepoints
+(user_events with the [EventHeader](https://github.com/microsoft/LinuxTracepoints/tree/main/libeventheader-tracepoint)
+encoding; requires a Linux 6.4+ kernel).
+
+*Note*: Linux kernels without user_events support will not log any events.
+
 [etw]: https://learn.microsoft.com/windows/win32/etw/about-event-tracing
 [eventheader]: https://github.com/microsoft/LinuxTracepoints/tree/main/libeventheader-tracepoint
 [`tracing`]: https://crates.io/crates/tracing

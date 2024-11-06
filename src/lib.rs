@@ -83,12 +83,9 @@
 //! ### Disabled Events
 //! 
 //! When an event is not enabled by a ETW session or Linux tracing session,
-//! the cost of logging an event should be effectively zero. On Windows,
-//! this is a few instructions to check the process-local enablement mask
+//! the cost of logging an event should be effectively zero. This is a few
+//! instructions to check the process-local enablement mask
 //! and skip over performing any further work if the event is not enabled.
-//! On Linux, this enablement check involves a syscall to ask the kernel
-//! if the event is enabled, though Linux syscalls are significantly faster
-//! than performing a syscall on Windows, and the total overhead remains small.
 //! 
 //! ### Enabled Events
 //! 

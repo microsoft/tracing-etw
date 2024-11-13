@@ -1,5 +1,4 @@
-#[allow(clippy::module_inception)]
-mod layer;
+mod layer_impl;
 
 #[cfg(any(not(feature = "global_filter"), docsrs))]
 mod filter;

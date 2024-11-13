@@ -11,7 +11,6 @@ use tracing_subscriber::filter::{combinator::And, FilterExt, Filtered, Targets};
 use tracing_subscriber::{Layer, layer::Filter};
 use tracing_subscriber::registry::LookupSpan;
 
-
 #[cfg(any(not(feature = "global_filter"), docsrs))]
 use crate::layer::EtwFilter;
 use crate::layer::{EtwLayer, _EtwLayer};

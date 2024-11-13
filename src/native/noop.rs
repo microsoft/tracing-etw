@@ -2,20 +2,12 @@ use std::{pin::Pin, sync::Arc, time::SystemTime};
 
 use tracing_subscriber::registry::{LookupSpan, SpanRef};
 
-use crate::values::*;
+use crate::error::EtwError;
 
 #[allow(non_upper_case_globals)]
 pub(crate) static mut _start__etw_kw: usize = 0;
 #[allow(non_upper_case_globals)]
 pub(crate) static mut _stop__etw_kw: usize = 0;
-
-pub(crate) struct EventBuilderWrapper<'a> {
-    _p: core::marker::PhantomData<&'a u8>,
-}
-
-impl<T> AddFieldAndValue<T> for EventBuilderWrapper<'_> {
-    fn add_field_value(&mut self, _fv: &FieldAndValue) {}
-}
 
 #[doc(hidden)]
 pub struct Provider;
@@ -29,7 +21,7 @@ impl crate::native::ProviderTypes for Provider {
         false
     }
 
-    fn is_valid(value: &Self::ProviderGroupType) -> Result<(), EtwError> {
+    fn is_valid(_value: &Self::ProviderGroupType) -> Result<(), EtwError> {
         Ok(())
     }
 }

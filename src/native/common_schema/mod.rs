@@ -14,8 +14,4 @@ pub use user_events_cs::CommonSchemaProvider as Provider;
 
 #[cfg(not(any(target_os = "windows", target_os = "linux")))]
 #[doc(hidden)]
-#[path = "../noop.rs"]
-pub mod noop;
-#[cfg(not(any(target_os = "windows", target_os = "linux")))]
-#[doc(hidden)]
-pub use noop::Provider;
+pub use super::noop::Provider;

@@ -11,7 +11,6 @@ use tracing_subscriber::filter::{combinator::And, FilterExt, Filtered, Targets};
 use tracing_subscriber::{Layer, layer::Filter};
 use tracing_subscriber::registry::LookupSpan;
 
-
 #[cfg(any(not(feature = "global_filter"), docsrs))]
 use crate::layer::EtwFilter;
 use crate::layer::{EtwLayer, _EtwLayer};
@@ -97,9 +96,8 @@ where
     /// This is a convenience function to help with tools that do not implement
     /// the standard provider name to ID algorithm.
     pub fn get_provider_id(&self) -> GuidWrapper {
-        self.provider_id.clone()
+        self.provider_id
     }
-
 
     /// Set the keyword used for events that do not explicitly set a keyword.
     /// 

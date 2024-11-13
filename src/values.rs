@@ -3,7 +3,7 @@ use std::fmt::Write;
 
 use tracing::field;
 
-#[allow(non_camel_case_types)]
+#[allow(non_camel_case_types, dead_code)]
 #[derive(Default, Clone)]
 #[doc(hidden)]
 pub enum ValueTypes {

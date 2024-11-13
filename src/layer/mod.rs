@@ -1,3 +1,4 @@
+#[allow(clippy::module_inception)]
 mod layer;
 
 #[cfg(any(not(feature = "global_filter"), docsrs))]
@@ -59,7 +60,7 @@ where
     Mode::Provider: EventWriter<Mode> + 'static,
 {
     fn is_enabled(&self, callsite: &callsite::Identifier, level: &tracing_core::Level) -> bool {
-        let etw_meta = EVENT_METADATA.get(&callsite);
+        let etw_meta = EVENT_METADATA.get(callsite);
         let keyword = if let Some(meta) = etw_meta {
             meta.kw
         } else {

@@ -97,9 +97,8 @@ where
     /// This is a convenience function to help with tools that do not implement
     /// the standard provider name to ID algorithm.
     pub fn get_provider_id(&self) -> GuidWrapper {
-        self.provider_id.clone()
+        self.provider_id
     }
-
 
     /// Set the keyword used for events that do not explicitly set a keyword.
     /// 

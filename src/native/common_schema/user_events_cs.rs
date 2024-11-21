@@ -13,7 +13,7 @@ use std::{
 };
 use tracing_subscriber::registry::{LookupSpan, SpanRef};
 
-thread_local! {static EBW: RefCell<EventBuilder>  = const { RefCell::new(EventBuilder::new());} }
+thread_local! {static EBW: RefCell<EventBuilder>  = const { RefCell::new(EventBuilder::new()) } }
 
 pub(crate) struct CommonSchemaPartCBuilder<'a> {
     pub(crate) eb: &'a mut EventBuilder,

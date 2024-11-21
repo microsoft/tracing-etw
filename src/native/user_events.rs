@@ -17,7 +17,7 @@ extern "C" {
 #[used]
 static mut ETW_META_PTR: *const crate::_details::EventMetadata = core::ptr::null();
 
-thread_local! {static EBW: std::cell::RefCell<EventBuilder>  = RefCell::new(EventBuilder::new());}
+thread_local! {static EBW: RefCell<EventBuilder>  = const { RefCell::new(EventBuilder::new());} }
 
 impl<T> AddFieldAndValue<T> for &'_ mut eventheader_dynamic::EventBuilder {
     fn add_field_value(&mut self, fv: &FieldAndValue) {

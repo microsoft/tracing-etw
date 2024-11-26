@@ -1,5 +1,7 @@
 // Module for static variables that are used by the crate.
 
+use std::{cmp, hash::{BuildHasher, RandomState}};
+
 pub(crate) static GLOBAL_ACTIVITY_SEED: once_cell::sync::Lazy<[u8; 16]> =
 once_cell::sync::Lazy::new(|| {
         let now = std::time::SystemTime::now()
@@ -15,7 +17,7 @@ once_cell::sync::Lazy::new(|| {
     });
 
 pub(crate) static EVENT_METADATA: once_cell::sync::Lazy<
-    dashmap::DashMap<tracing::callsite::Identifier, &'static crate::_details::EventMetadata>,
+    Box<[crate::_details::ParsedEventMetadata]>,
 > = once_cell::sync::Lazy::new(|| {
     unsafe {
         let start =
@@ -30,7 +32,7 @@ pub(crate) static EVENT_METADATA: once_cell::sync::Lazy<
             &mut *core::ptr::slice_from_raw_parts_mut(start, stop.offset_from(start) as usize);
 
         if events_slice.is_empty() {
-            return dashmap::DashMap::new();
+            return Box::new_uninit_slice(0).assume_init();
         }
 
         // Sort spurious nulls to the end
@@ -61,13 +63,46 @@ pub(crate) static EVENT_METADATA: once_cell::sync::Lazy<
             next_pos += 1;
         }
 
-        let map = dashmap::DashMap::with_capacity(events_slice.len());
+        let mut map: Box<[core::mem::MaybeUninit<crate::_details::ParsedEventMetadata>]> = Box::new_uninit_slice(good_pos);
+        let bh = RandomState::new();
         next_pos = 0;
         while next_pos < good_pos {
-            let event = &*events_slice[next_pos];
-            map.insert(event.identity.clone(), event);
+            let next = &*events_slice[next_pos];
+            map[next_pos].as_mut_ptr().write(crate::_details::ParsedEventMetadata { identity_hash: bh.hash_one(&next.identity), kw: next.kw, event_tag: next.event_tag });
             next_pos += 1;
         }
-        map
+        let mut sorted = map.assume_init();
+        sorted.sort_unstable_by(|a, b| b.cmp(a));
+        sorted
     }
 });
+
+impl core::cmp::PartialEq for crate::_details::ParsedEventMetadata {
+    fn eq(&self, other: &Self) -> bool {
+        self.identity_hash == other.identity_hash
+    }
+}
+
+impl core::cmp::Eq for crate::_details::ParsedEventMetadata {}
+
+impl core::cmp::PartialOrd for crate::_details::ParsedEventMetadata {
+    fn partial_cmp(&self, other: &Self) -> Option<cmp::Ordering> {
+        self.identity_hash.partial_cmp(&other.identity_hash)
+    }
+}
+
+impl core::cmp::Ord for crate::_details::ParsedEventMetadata {
+    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
+        self.identity_hash.cmp(&other.identity_hash)
+    }
+}
+
+pub(crate) fn get_event_metadata(id: &tracing::callsite::Identifier) -> Option<&'static crate::_details::ParsedEventMetadata> {
+    let bh = RandomState::new();
+    let hash = bh.hash_one(id);
+    let etw_meta = EVENT_METADATA.binary_search_by_key(&hash, |m| { m.identity_hash });
+    match etw_meta {
+        Ok(idx) => Some(&EVENT_METADATA[idx]),
+        _ => None
+    }
+}

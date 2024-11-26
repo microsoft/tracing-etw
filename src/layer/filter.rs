@@ -1,7 +1,7 @@
 use tracing::Subscriber;
 use tracing_subscriber::{layer::Filter, registry::LookupSpan};
 
-use crate::{native::{EventWriter, ProviderTypes}, statics::EVENT_METADATA};
+use crate::{native::{EventWriter, ProviderTypes}, statics::get_event_metadata};
 
 use super::*;
 
@@ -15,7 +15,7 @@ where
         &self,
         metadata: &'static tracing::Metadata<'static>,
     ) -> tracing::subscriber::Interest {
-        let etw_meta = EVENT_METADATA.get(&metadata.callsite());
+        let etw_meta = get_event_metadata(&metadata.callsite());
         let keyword = if let Some(meta) = etw_meta {
             meta.kw
         } else {

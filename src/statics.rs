@@ -16,6 +16,8 @@ once_cell::sync::Lazy::new(|| {
         data
     });
 
+static BH: once_cell::sync::Lazy<RandomState> = once_cell::sync::Lazy::new(|| {RandomState::new()});
+
 pub(crate) static EVENT_METADATA: once_cell::sync::Lazy<
     Box<[crate::_details::ParsedEventMetadata]>,
 > = once_cell::sync::Lazy::new(|| {
@@ -63,12 +65,11 @@ pub(crate) static EVENT_METADATA: once_cell::sync::Lazy<
             next_pos += 1;
         }
 
-        let mut map: Box<[core::mem::MaybeUninit<crate::_details::ParsedEventMetadata>]> = Box::new_uninit_slice(good_pos);
-        let bh = RandomState::new();
+        let mut map: Box<[core::mem::MaybeUninit<crate::_details::ParsedEventMetadata>]> = Box::new_uninit_slice(good_pos + 1);
         next_pos = 0;
-        while next_pos < good_pos {
+        while next_pos <= good_pos {
             let next = &*events_slice[next_pos];
-            map[next_pos].as_mut_ptr().write(crate::_details::ParsedEventMetadata { identity_hash: bh.hash_one(&next.identity), kw: next.kw, event_tag: next.event_tag });
+            map[next_pos].as_mut_ptr().write(crate::_details::ParsedEventMetadata { identity_hash: BH.hash_one(&next.identity), kw: next.kw, event_tag: next.event_tag });
             next_pos += 1;
         }
         let mut sorted = map.assume_init();
@@ -98,8 +99,7 @@ impl core::cmp::Ord for crate::_details::ParsedEventMetadata {
 }
 
 pub(crate) fn get_event_metadata(id: &tracing::callsite::Identifier) -> Option<&'static crate::_details::ParsedEventMetadata> {
-    let bh = RandomState::new();
-    let hash = bh.hash_one(id);
+    let hash = BH.hash_one(id);
     let etw_meta = EVENT_METADATA.binary_search_by_key(&hash, |m| { m.identity_hash });
     match etw_meta {
         Ok(idx) => Some(&EVENT_METADATA[idx]),

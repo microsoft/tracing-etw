@@ -208,6 +208,7 @@ macro_rules! etw_event {
 
         static ETW_META: $crate::_details::EventMetadata = $crate::_details::EventMetadata{
             kw: $kw,
+            // TODO: Hash the callsite identity at compile time, or get Identifier to implement Ord
             identity: tracing_core::identify_callsite!(&CALLSITE),
             event_tag: $tags as u32
         };

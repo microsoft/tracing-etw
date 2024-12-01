@@ -132,7 +132,8 @@ impl crate::native::EventWriter<Provider> for Provider {
         }
         let mut provider = eventheader_dynamic::Provider::new(provider_name, &options);
 
-        for event in &*crate::statics::EVENT_METADATA {
+        // Keywords are static, but levels are dynamic so we have to register them all
+        for event in crate::statics::event_metadata() {
             provider.register_set(
                 Self::map_level(&tracing::Level::ERROR),
                 event.kw,

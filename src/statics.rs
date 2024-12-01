@@ -1,8 +1,10 @@
 // Module for static variables that are used by the crate.
 
-use std::{cmp, iter::FusedIterator};
+use std::{cmp, hash::BuildHasher, iter::FusedIterator};
 
 use crate::_details::EventMetadata;
+
+type FnvHasher = std::hash::BuildHasherDefault::<hashers::fnv::FNV1aHasher64>;
 
 pub(crate) static GLOBAL_ACTIVITY_SEED: once_cell::sync::Lazy<[u8; 16]> =
 once_cell::sync::Lazy::new(|| {
@@ -67,31 +69,19 @@ static EVENT_METADATA: once_cell::sync::Lazy<
             next_pos += 1;
         }
 
+        let bh = FnvHasher::default();
+
         let mut map: Box<[core::mem::MaybeUninit<crate::_details::ParsedEventMetadata>]> = Box::new_uninit_slice(good_pos + 1);
         next_pos = 0;
-        while next_pos <= good_pos {
+        while next_pos < good_pos {
             let next = &*events_slice[next_pos];
-            let identity_hash = hashers::fnv::fnv1a64(
-                core::slice::from_raw_parts(&next.identity as *const tracing_core::callsite::Identifier as *const u8,
-                  core::mem::size_of::<tracing_core::callsite::Identifier>()));
+            let identity_hash = bh.hash_one(&next.identity);
             map[next_pos].as_mut_ptr().write(crate::_details::ParsedEventMetadata { identity_hash, meta: next });
             next_pos += 1;
         }
         let mut sorted = map.assume_init();
         sorted.sort_unstable_by(|a, b| b.cmp(a));
         sorted
-
-        // Sort the good pointers by their values
-        // let good_events = &mut events_slice[..good_pos + 1];
-        // good_events.sort_by(|a, b| {
-        //     let lhs = &**a;
-        //     let rhs = &**b;
-        //     lhs.cmp(rhs)
-        // });
-
-        // let wrapper = start as *const EventMetadataPtr;
-        // let slice = core::ptr::slice_from_raw_parts(wrapper, good_pos + 1);
-        // &*slice
     }
 });
 
@@ -148,11 +138,8 @@ impl core::cmp::Ord for crate::_details::ParsedEventMetadata {
 }
 
 pub(crate) fn get_event_metadata(id: &tracing::callsite::Identifier) -> Option<&'static crate::_details::EventMetadata> {
-    let identity_hash = hashers::fnv::fnv1a64(unsafe {
-                 core::slice::from_raw_parts(
-                   id as *const tracing_core::callsite::Identifier as *const u8,
-                    core::mem::size_of::<tracing_core::callsite::Identifier>())
-    });
+    let bh = FnvHasher::default();
+    let identity_hash = bh.hash_one(id);
     let idx = EVENT_METADATA.partition_point(|other| other.identity_hash > identity_hash);
     let mut cur = idx;
     while cur <EVENT_METADATA.len() {

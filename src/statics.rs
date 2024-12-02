@@ -20,66 +20,75 @@ pub(crate) static GLOBAL_ACTIVITY_SEED: LazyLock<[u8; 16]> = LazyLock::new(|| {
     });
 
 static EVENT_METADATA: LazyLock<Box<[ParsedEventMetadata]>> = LazyLock::new(|| {
-    unsafe {
-        // The array of pointers are in a mutable section and can be sorted/deduped, but they are pointing to read-only static data
+    // The array of pointers are in a mutable section and can be sorted/deduped, but they are pointing to read-only static data
 
-        let start =
-           &raw const crate::native::_start__etw_kw as *mut *const EventMetadata;
-        let stop =
-            &raw const crate::native::_stop__etw_kw as *mut *const EventMetadata;
+    let start =
+        &raw const crate::native::_start__etw_kw as *mut *const EventMetadata;
+    let stop =
+        &raw const crate::native::_stop__etw_kw as *mut *const EventMetadata;
 
-        #[cfg(target_os = "windows")]
-        let start = start.add(1);
+    assert!(!start.is_null());
 
-        let events_slice =
-            &mut *core::ptr::slice_from_raw_parts_mut(start, stop.offset_from(start) as usize);
+    // SAFETY On Windows the start and stop entries are sentry values at the start and end of the linker section.
+    // Linux does not need these sentries.
+    #[cfg(target_os = "windows")]
+    let start = unsafe { start.add(1) };
+    // SAFETY The entries in the linker section are all pointers, we can guarantee that stop is a multiple of sizeof(void*) distance from start.
+    let stop_offset = unsafe { stop.offset_from(start) as usize };
 
-        if events_slice.is_empty() {
-            return Box::new([]);
-        }
+    // SAFETY Start is not null and points to a valid static in memory (else the code wouldn't link),
+    // so we can guarantee we aren't making a reference to null here.
+    let events_slice = unsafe {
+        &mut *core::ptr::slice_from_raw_parts_mut(start, stop_offset) };
 
-        // Sort spurious nulls to the end. This is comparing pointers as usize, not their pointed-to values.
-        events_slice.sort_unstable_by(|a, b| b.cmp(a));
-
-        // Remove spurious duplicate pointers
-        let end_pos = events_slice.len();
-        let mut good_pos = 0;
-        while good_pos != end_pos - 1 {
-            if events_slice[good_pos] == events_slice[good_pos + 1] {
-                let mut next_pos = good_pos + 2;
-                while next_pos != end_pos {
-                    if events_slice[good_pos] != events_slice[next_pos] {
-                        good_pos += 1;
-                        events_slice[good_pos] = events_slice[next_pos];
-                    }
-                    next_pos += 1;
-                }
-                break;
-            }
-            good_pos += 1;
-        }
-
-        // Explicitly set all the values at the end to null
-        let mut next_pos = good_pos + 1;
-        while next_pos != end_pos {
-            events_slice[next_pos] = core::ptr::null();
-            next_pos += 1;
-        }
-
-        let bh = FnvHasher::default();
-
-        let mut map: Box<[core::mem::MaybeUninit<ParsedEventMetadata>]> = Box::new_uninit_slice(good_pos + 1);
-        next_pos = 0;
-        while next_pos < good_pos {
-            let next = &*events_slice[next_pos];
-            let identity_hash = bh.hash_one(&next.identity);
-            map[next_pos].as_mut_ptr().write(ParsedEventMetadata { identity_hash, meta: next });
-            next_pos += 1;
-        }
-        let mut sorted = map.assume_init();
-        sorted.sort_unstable_by(|a, b| b.cmp(a));
-        sorted
+    if events_slice.is_empty() {
+        return Box::new([]);
     }
+
+    // Sort spurious nulls to the end. This is comparing pointers as usize, not their pointed-to values.
+    events_slice.sort_unstable_by(|a, b| b.cmp(a));
+
+    // Remove spurious duplicate pointers
+    let end_pos = events_slice.len();
+    let mut good_pos = 0;
+    while good_pos != end_pos - 1 {
+        if events_slice[good_pos] == events_slice[good_pos + 1] {
+            let mut next_pos = good_pos + 2;
+            while next_pos != end_pos {
+                if events_slice[good_pos] != events_slice[next_pos] {
+                    good_pos += 1;
+                    events_slice[good_pos] = events_slice[next_pos];
+                }
+                next_pos += 1;
+            }
+            break;
+        }
+        good_pos += 1;
+    }
+
+    // Explicitly set all the values at the end to null
+    let mut next_pos = good_pos + 1;
+    while next_pos != end_pos {
+        events_slice[next_pos] = core::ptr::null();
+        next_pos += 1;
+    }
+
+    let bh = FnvHasher::default();
+
+    let mut map: Box<[core::mem::MaybeUninit<ParsedEventMetadata>]> = Box::new_uninit_slice(good_pos + 1);
+    next_pos = 0;
+    while next_pos < good_pos {
+        // SAFETY The above code as already validated that events_slice[0..good_pos] are non-null pointers
+        let next = unsafe { &*events_slice[next_pos] };
+        let identity_hash = bh.hash_one(&next.identity);
+        // SAFETY The pointer being written to is valid (we just allocated it above) and aligned (it was allocated with the same type as being written)
+        unsafe { map[next_pos].as_mut_ptr().write(ParsedEventMetadata { identity_hash, meta: next }) };
+        next_pos += 1;
+    }
+    // SAFETY We've explicitly initialized all the values now
+    let mut sorted = unsafe { map.assume_init() };
+    sorted.sort_unstable_by(|a, b| b.cmp(a));
+    sorted
 });
 
 impl core::cmp::PartialEq for ParsedEventMetadata {

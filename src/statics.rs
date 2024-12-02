@@ -1,13 +1,12 @@
 // Module for static variables that are used by the crate.
 
-use std::{cmp, hash::BuildHasher, iter::FusedIterator};
+use std::{cmp, hash::BuildHasher, iter::FusedIterator, sync::LazyLock};
 
-use crate::_details::EventMetadata;
+use crate::_details::{EventMetadata, ParsedEventMetadata};
 
 type FnvHasher = std::hash::BuildHasherDefault::<hashers::fnv::FNV1aHasher64>;
 
-pub(crate) static GLOBAL_ACTIVITY_SEED: once_cell::sync::Lazy<[u8; 16]> =
-once_cell::sync::Lazy::new(|| {
+pub(crate) static GLOBAL_ACTIVITY_SEED: LazyLock<[u8; 16]> = LazyLock::new(|| {
         let now = std::time::SystemTime::now()
             .duration_since(std::time::SystemTime::UNIX_EPOCH)
             .unwrap()
@@ -20,16 +19,14 @@ once_cell::sync::Lazy::new(|| {
         data
     });
 
-static EVENT_METADATA: once_cell::sync::Lazy<
-    Box<[crate::_details::ParsedEventMetadata]>,
-> = once_cell::sync::Lazy::new(|| {
+static EVENT_METADATA: LazyLock<Box<[ParsedEventMetadata]>> = LazyLock::new(|| {
     unsafe {
         // The array of pointers are in a mutable section and can be sorted/deduped, but they are pointing to read-only static data
 
         let start =
-           &raw const crate::native::_start__etw_kw as *mut *const crate::_details::EventMetadata;
+           &raw const crate::native::_start__etw_kw as *mut *const EventMetadata;
         let stop =
-            &raw const crate::native::_stop__etw_kw as *mut *const crate::_details::EventMetadata;
+            &raw const crate::native::_stop__etw_kw as *mut *const EventMetadata;
 
         #[cfg(target_os = "windows")]
         let start = start.add(1);
@@ -71,12 +68,12 @@ static EVENT_METADATA: once_cell::sync::Lazy<
 
         let bh = FnvHasher::default();
 
-        let mut map: Box<[core::mem::MaybeUninit<crate::_details::ParsedEventMetadata>]> = Box::new_uninit_slice(good_pos + 1);
+        let mut map: Box<[core::mem::MaybeUninit<ParsedEventMetadata>]> = Box::new_uninit_slice(good_pos + 1);
         next_pos = 0;
         while next_pos < good_pos {
             let next = &*events_slice[next_pos];
             let identity_hash = bh.hash_one(&next.identity);
-            map[next_pos].as_mut_ptr().write(crate::_details::ParsedEventMetadata { identity_hash, meta: next });
+            map[next_pos].as_mut_ptr().write(ParsedEventMetadata { identity_hash, meta: next });
             next_pos += 1;
         }
         let mut sorted = map.assume_init();
@@ -85,21 +82,21 @@ static EVENT_METADATA: once_cell::sync::Lazy<
     }
 });
 
-impl core::cmp::PartialEq for crate::_details::ParsedEventMetadata {
+impl core::cmp::PartialEq for ParsedEventMetadata {
     fn eq(&self, other: &Self) -> bool {
         cmp::Ordering::Equal == self.cmp(other)
     }
 }
 
-impl core::cmp::Eq for crate::_details::ParsedEventMetadata {}
+impl core::cmp::Eq for ParsedEventMetadata {}
 
-impl core::cmp::PartialOrd for crate::_details::ParsedEventMetadata {
+impl core::cmp::PartialOrd for ParsedEventMetadata {
     fn partial_cmp(&self, other: &Self) -> Option<cmp::Ordering> {
         Some(self.cmp(other))
     }
 }
 
-impl core::cmp::Ord for crate::_details::ParsedEventMetadata {
+impl core::cmp::Ord for ParsedEventMetadata {
     fn cmp(&self, other: &Self) -> std::cmp::Ordering {
         match self.identity_hash.cmp(&other.identity_hash) {
             cmp::Ordering::Equal => {

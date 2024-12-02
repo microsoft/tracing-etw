@@ -92,7 +92,7 @@ pub(crate) struct ValueVisitor<'a> {
     pub(crate) fields: &'a mut [FieldValueIndex],
 }
 
-impl<'a> ValueVisitor<'a> {
+impl ValueVisitor<'_> {
     fn update_value(&mut self, field_name: &'static str, value: ValueTypes) {
         let res = self.fields.binary_search_by_key(&field_name, |idx| {
             self.fields[idx.sort_index as usize].field
@@ -105,7 +105,7 @@ impl<'a> ValueVisitor<'a> {
     }
 }
 
-impl<'a> field::Visit for ValueVisitor<'a> {
+impl field::Visit for ValueVisitor<'_> {
     fn record_debug(&mut self, field: &field::Field, value: &dyn std::fmt::Debug) {
         let mut string = String::with_capacity(10); // Just a guess
         if write!(string, "{:?}", value).is_err() {

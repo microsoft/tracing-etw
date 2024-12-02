@@ -216,14 +216,14 @@ macro_rules! etw_event {
         paste! {
             #[cfg(target_os = "linux")]
             #[link_section = "_etw_kw"]
-            #[allow(non_upper_case_globals)]
+            #[allow(non_upper_case_globals, dead_code)]
             static mut [<ETW_META_PTR $name>]: *const $crate::_details::EventMetadata = &ETW_META;
         }
 
         paste! {
             #[cfg(target_os = "windows")]
             #[link_section = ".rsdata$zRSETW5"]
-            #[allow(non_upper_case_globals)]
+            #[allow(non_upper_case_globals, dead_code)]
             static mut [<ETW_META_PTR $name>]: *const $crate::_details::EventMetadata = &ETW_META;
         }
 

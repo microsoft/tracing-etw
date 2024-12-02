@@ -55,12 +55,18 @@ static EVENT_METADATA: LazyLock<Box<[ParsedEventMetadata]>> = LazyLock::new(|| {
         if events_slice[good_pos] == events_slice[good_pos + 1] {
             let mut next_pos = good_pos + 2;
             while next_pos != end_pos {
+                if events_slice[next_pos].is_null() {
+                    break;
+                }
                 if events_slice[good_pos] != events_slice[next_pos] {
                     good_pos += 1;
                     events_slice[good_pos] = events_slice[next_pos];
                 }
                 next_pos += 1;
             }
+            break;
+        }
+        if events_slice[good_pos + 1].is_null() {
             break;
         }
         good_pos += 1;
@@ -77,7 +83,7 @@ static EVENT_METADATA: LazyLock<Box<[ParsedEventMetadata]>> = LazyLock::new(|| {
 
     let mut map: Box<[core::mem::MaybeUninit<ParsedEventMetadata>]> = Box::new_uninit_slice(good_pos + 1);
     next_pos = 0;
-    while next_pos < good_pos {
+    while next_pos <= good_pos {
         // SAFETY The above code as already validated that events_slice[0..good_pos] are non-null pointers
         let next = unsafe { &*events_slice[next_pos] };
         let identity_hash = bh.hash_one(&next.identity);
@@ -168,7 +174,58 @@ impl Iterator for EventMetadataEnumerator {
 }
 
 #[allow(dead_code)]
-// Currently only used on Linux targets
+// Currently only used on Linux targets and the tests
 pub(crate) fn event_metadata() -> impl Iterator<Item = <EventMetadataEnumerator as Iterator>::Item> {
     EventMetadataEnumerator{current_index: 0}
+}
+
+// Only one test function can be compiled into the module at a time, since the statics they produce are global
+#[cfg(test)]
+mod test {
+    use tracing::Level;
+
+    use crate::{etw_event, statics::event_metadata};
+
+    // #[test]
+    // fn test_none() {
+    //     let mut sum = 0;
+    //     for event in event_metadata() {
+    //         sum += event.kw;
+    //     }
+
+    //     assert_eq!(sum, 0);
+    // }
+
+    // #[test]
+    // fn test_one() {
+    //     etw_event!(name: "TestEventWithKeyword1", Level::ERROR, 1, "An event with a name and keyword!");
+
+    //     let mut sum = 0;
+    //     for event in event_metadata() {
+    //         sum += event.kw;
+    //     }
+
+    //     assert_eq!(sum, 1);
+    // }
+
+    #[test]
+    fn test_ten() {
+        etw_event!(name: "TestEventWithKeyword1", Level::ERROR, 1, "An event with a name and keyword!");
+        etw_event!(name: "TestEventWithKeyword2", Level::WARN, 2, "An event with a name and keyword!");
+        etw_event!(name: "TestEventWithKeyword3", Level::INFO, 3, "An event with a name and keyword!");
+        etw_event!(name: "TestEventWithKeyword4", Level::DEBUG, 4, "An event with a name and keyword!");
+        etw_event!(name: "TestEventWithKeyword5", Level::TRACE, 5, "An event with a name and keyword!");
+        etw_event!(name: "TestEventWithKeyword6", Level::TRACE, 6, "An event with a name and keyword!");
+        etw_event!(name: "TestEventWithKeyword7", Level::DEBUG, 7, "An event with a name and keyword!");
+        etw_event!(name: "TestEventWithKeyword8", Level::INFO, 8, "An event with a name and keyword!");
+        etw_event!(name: "TestEventWithKeyword9", Level::WARN, 9, "An event with a name and keyword!");
+        etw_event!(name: "TestEventWithKeyword10", Level::ERROR, 10, "An event with a name and keyword!");
+
+        let mut sum = 0;
+        for event in event_metadata() {
+            sum += event.kw;
+        }
+
+        assert_eq!(sum, 55);
+    }
 }

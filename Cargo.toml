@@ -5,7 +5,7 @@ edition = "2021"
 resolver = "2"
 license = "MIT"
 repository = "https://github.com/microsoft/tracing-etw"
-rust-version = "1.82"
+rust-version = "1.80"
 authors = ["Kyle Sabo", "Microsoft"]
 description = "ETW or Linux user_events output for tokio-tracing"
 

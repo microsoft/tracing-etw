@@ -16,6 +16,10 @@ encoding; requires a Linux 6.4+ kernel).
 
 *Note*: Linux kernels without user_events support will not log any events.
 
+# MSV
+
+Minimum supported Rust version is 1.80 (released July 2024).
+
 [etw]: https://learn.microsoft.com/windows/win32/etw/about-event-tracing
 [eventheader]: https://github.com/microsoft/LinuxTracepoints/tree/main/libeventheader-tracepoint
 [`tracing`]: https://crates.io/crates/tracing

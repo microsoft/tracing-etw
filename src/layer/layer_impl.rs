@@ -35,7 +35,7 @@ where
         &self,
         metadata: &'static tracing::Metadata<'static>,
     ) -> tracing::subscriber::Interest {
-        let etw_meta = EVENT_METADATA.get(&metadata.callsite());
+        let etw_meta = get_event_metadata(&metadata.callsite());
         let keyword = if let Some(meta) = etw_meta {
             meta.kw
         } else {
@@ -84,7 +84,7 @@ where
             .event_span(event)
             .map_or(0, |evt| evt.parent().map_or(0, |p| p.id().into_u64()));
 
-        let etw_meta = EVENT_METADATA.get(&event.metadata().callsite());
+        let etw_meta = get_event_metadata(&event.metadata().callsite());
         let (name, keyword, tag) = if let Some(meta) = etw_meta {
             (event.metadata().name(), meta.kw, meta.event_tag)
         } else {
@@ -203,7 +203,7 @@ where
             return;
         };
 
-        let etw_meta = EVENT_METADATA.get(&metadata.callsite());
+        let etw_meta = get_event_metadata(&metadata.callsite());
         let (keyword, tag) = if let Some(meta) = etw_meta {
             (meta.kw, meta.event_tag)
         } else {
@@ -244,7 +244,7 @@ where
             return;
         };
 
-        let etw_meta = EVENT_METADATA.get(&metadata.callsite());
+        let etw_meta = get_event_metadata(&metadata.callsite());
         let (keyword, tag) = if let Some(meta) = etw_meta {
             (meta.kw, meta.event_tag)
         } else {

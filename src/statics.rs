@@ -1,7 +1,12 @@
 // Module for static variables that are used by the crate.
 
-pub(crate) static GLOBAL_ACTIVITY_SEED: once_cell::sync::Lazy<[u8; 16]> =
-once_cell::sync::Lazy::new(|| {
+use std::{cmp, hash::BuildHasher, iter::FusedIterator, sync::LazyLock};
+
+use crate::_details::{EventMetadata, ParsedEventMetadata};
+
+type FnvHasher = std::hash::BuildHasherDefault::<hashers::fnv::FNV1aHasher64>;
+
+pub(crate) static GLOBAL_ACTIVITY_SEED: LazyLock<[u8; 16]> = LazyLock::new(|| {
         let now = std::time::SystemTime::now()
             .duration_since(std::time::SystemTime::UNIX_EPOCH)
             .unwrap()
@@ -14,60 +19,199 @@ once_cell::sync::Lazy::new(|| {
         data
     });
 
-pub(crate) static EVENT_METADATA: once_cell::sync::Lazy<
-    dashmap::DashMap<tracing::callsite::Identifier, &'static crate::_details::EventMetadata>,
-> = once_cell::sync::Lazy::new(|| {
-    unsafe {
-        let start =
-            core::ptr::addr_of!(crate::native::_start__etw_kw) as *mut *const crate::_details::EventMetadata;
-        let stop =
-            core::ptr::addr_of!(crate::native::_stop__etw_kw) as *mut *const crate::_details::EventMetadata;
+static EVENT_METADATA: LazyLock<Box<[ParsedEventMetadata]>> = LazyLock::new(|| {
+    // The array of pointers are in a mutable section and can be sorted/deduped, but they are pointing to read-only static data
 
-        #[cfg(target_os = "windows")]
-        let start = start.add(1);
+    let start =
+        &raw const crate::native::_start__etw_kw as *mut *const EventMetadata;
+    let stop =
+        &raw const crate::native::_stop__etw_kw as *mut *const EventMetadata;
 
-        let events_slice =
-            &mut *core::ptr::slice_from_raw_parts_mut(start, stop.offset_from(start) as usize);
+    assert!(!start.is_null());
 
-        if events_slice.is_empty() {
-            return dashmap::DashMap::new();
-        }
+    // SAFETY On Windows the start and stop entries are sentry values at the start and end of the linker section.
+    // Linux does not need these sentries.
+    #[cfg(target_os = "windows")]
+    let start = unsafe { start.add(1) };
+    // SAFETY The entries in the linker section are all pointers, we can guarantee that stop is a multiple of sizeof(void*) distance from start.
+    let stop_offset = unsafe { stop.offset_from(start) as usize };
 
-        // Sort spurious nulls to the end
-        events_slice.sort_unstable_by(|a, b| b.cmp(a));
+    // SAFETY Start is not null and points to a valid static in memory (else the code wouldn't link),
+    // so we can guarantee we aren't making a reference to null here.
+    let events_slice = unsafe {
+        &mut *core::ptr::slice_from_raw_parts_mut(start, stop_offset) };
 
-        // Remove spurious duplicates
-        let end_pos = events_slice.len();
-        let mut good_pos = 0;
-        while good_pos != end_pos - 1 {
-            if events_slice[good_pos] == events_slice[good_pos + 1] {
-                let mut next_pos = good_pos + 2;
-                while next_pos != end_pos {
-                    if events_slice[good_pos] != events_slice[next_pos] {
-                        good_pos += 1;
-                        events_slice[good_pos] = events_slice[next_pos];
-                    }
-                    next_pos += 1;
-                }
-                break;
-            }
-            good_pos += 1;
-        }
-
-        // Explicitly set all the values at the end to null
-        let mut next_pos = good_pos + 1;
-        while next_pos != end_pos {
-            events_slice[next_pos] = core::ptr::null();
-            next_pos += 1;
-        }
-
-        let map = dashmap::DashMap::with_capacity(events_slice.len());
-        next_pos = 0;
-        while next_pos < good_pos {
-            let event = &*events_slice[next_pos];
-            map.insert(event.identity.clone(), event);
-            next_pos += 1;
-        }
-        map
+    if events_slice.is_empty() {
+        return Box::new([]);
     }
+
+    // Sort spurious nulls to the end. This is comparing pointers as usize, not their pointed-to values.
+    events_slice.sort_unstable_by(|a, b| b.cmp(a));
+
+    // Remove spurious duplicate pointers
+    let end_pos = events_slice.len();
+    let mut good_pos = 0;
+    while good_pos != end_pos - 1 {
+        if events_slice[good_pos] == events_slice[good_pos + 1] {
+            let mut next_pos = good_pos + 2;
+            while next_pos != end_pos {
+                if events_slice[next_pos].is_null() {
+                    break;
+                }
+                if events_slice[good_pos] != events_slice[next_pos] {
+                    good_pos += 1;
+                    events_slice[good_pos] = events_slice[next_pos];
+                }
+                next_pos += 1;
+            }
+            break;
+        }
+        if events_slice[good_pos + 1].is_null() {
+            break;
+        }
+        good_pos += 1;
+    }
+
+    // Explicitly set all the values at the end to null
+    let mut next_pos = good_pos + 1;
+    while next_pos != end_pos {
+        events_slice[next_pos] = core::ptr::null();
+        next_pos += 1;
+    }
+
+    let bh = FnvHasher::default();
+
+    let mut vec = Vec::with_capacity(good_pos + 1);
+    next_pos = 0;
+    while next_pos <= good_pos {
+        // SAFETY The above code as already validated that events_slice[0..good_pos] are non-null pointers
+        let next = unsafe { &*events_slice[next_pos] };
+        let identity_hash = bh.hash_one(&next.identity);
+        vec.push(ParsedEventMetadata { identity_hash, meta: next });
+        next_pos += 1;
+    }
+
+    let mut sorted = vec.into_boxed_slice();
+    sorted.sort_unstable_by(|a, b| b.cmp(a));
+    sorted
 });
+
+impl core::cmp::PartialEq for ParsedEventMetadata {
+    fn eq(&self, other: &Self) -> bool {
+        cmp::Ordering::Equal == self.cmp(other)
+    }
+}
+
+impl core::cmp::Eq for ParsedEventMetadata {}
+
+impl core::cmp::PartialOrd for ParsedEventMetadata {
+    fn partial_cmp(&self, other: &Self) -> Option<cmp::Ordering> {
+        Some(self.cmp(other))
+    }
+}
+
+// Order by hash only
+impl core::cmp::Ord for ParsedEventMetadata {
+    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
+        self.identity_hash.cmp(&other.identity_hash)
+    }
+}
+
+pub(crate) fn get_event_metadata(id: &tracing::callsite::Identifier) -> Option<&'static crate::_details::EventMetadata> {
+    let bh = FnvHasher::default();
+    let identity_hash = bh.hash_one(id);
+    let idx = EVENT_METADATA.partition_point(|other| other.identity_hash > identity_hash);
+    let mut cur = idx;
+    while cur <EVENT_METADATA.len() {
+        let meta = &EVENT_METADATA[cur];
+        if meta.identity_hash != identity_hash {
+            return None;
+        }
+
+        if meta.meta.identity == *id {
+            return Some(meta.meta);
+        }
+
+        cur += 1;
+    }
+    None
+}
+
+pub(crate) struct EventMetadataEnumerator {
+    current_index: usize
+}
+
+impl FusedIterator for EventMetadataEnumerator {}
+
+impl Iterator for EventMetadataEnumerator {
+    type Item = &'static EventMetadata;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        if self.current_index >= EVENT_METADATA.len() {
+            return None;
+        }
+
+        let result = &EVENT_METADATA[self.current_index].meta;
+
+        self.current_index += 1;
+
+        Some(result)
+    }
+}
+
+#[allow(dead_code)]
+// Currently only used on Linux targets and the tests
+pub(crate) fn event_metadata() -> impl Iterator<Item = <EventMetadataEnumerator as Iterator>::Item> {
+    EventMetadataEnumerator{current_index: 0}
+}
+
+// Only one test function can be compiled into the module at a time, since the statics the macro produces are global
+#[cfg(test)]
+mod test {
+    use tracing::Level;
+
+    use crate::{etw_event, statics::event_metadata};
+
+    // #[test]
+    // fn test_none() {
+    //     let mut sum = 0;
+    //     for event in event_metadata() {
+    //         sum += event.kw;
+    //     }
+
+    //     assert_eq!(sum, 0);
+    // }
+
+    // #[test]
+    // fn test_one() {
+    //     etw_event!(name: "TestEventWithKeyword1", Level::ERROR, 1, "An event with a name and keyword!");
+
+    //     let mut sum = 0;
+    //     for event in event_metadata() {
+    //         sum += event.kw;
+    //     }
+
+    //     assert_eq!(sum, 1);
+    // }
+
+    #[test]
+    fn test_ten() {
+        etw_event!(name: "TestEventWithKeyword1", Level::ERROR, 1, "An event with a name and keyword!");
+        etw_event!(name: "TestEventWithKeyword2", Level::WARN, 2, "An event with a name and keyword!");
+        etw_event!(name: "TestEventWithKeyword3", Level::INFO, 3, "An event with a name and keyword!");
+        etw_event!(name: "TestEventWithKeyword4", Level::DEBUG, 4, "An event with a name and keyword!");
+        etw_event!(name: "TestEventWithKeyword5", Level::TRACE, 5, "An event with a name and keyword!");
+        etw_event!(name: "TestEventWithKeyword6", Level::TRACE, 6, "An event with a name and keyword!");
+        etw_event!(name: "TestEventWithKeyword7", Level::DEBUG, 7, "An event with a name and keyword!");
+        etw_event!(name: "TestEventWithKeyword8", Level::INFO, 8, "An event with a name and keyword!");
+        etw_event!(name: "TestEventWithKeyword9", Level::WARN, 9, "An event with a name and keyword!");
+        etw_event!(name: "TestEventWithKeyword10", Level::ERROR, 10, "An event with a name and keyword!");
+
+        let mut sum = 0;
+        for event in event_metadata() {
+            sum += event.kw;
+        }
+
+        assert_eq!(sum, 55);
+    }
+}

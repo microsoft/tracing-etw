@@ -208,6 +208,7 @@ macro_rules! etw_event {
 
         static ETW_META: $crate::_details::EventMetadata = $crate::_details::EventMetadata{
             kw: $kw,
+            // TODO: Hash the callsite identity at compile time, or get Identifier to implement Ord
             identity: tracing_core::identify_callsite!(&CALLSITE),
             event_tag: $tags as u32
         };
@@ -215,14 +216,14 @@ macro_rules! etw_event {
         paste! {
             #[cfg(target_os = "linux")]
             #[link_section = "_etw_kw"]
-            #[allow(non_upper_case_globals)]
+            #[allow(non_upper_case_globals, dead_code)]
             static mut [<ETW_META_PTR $name>]: *const $crate::_details::EventMetadata = &ETW_META;
         }
 
         paste! {
             #[cfg(target_os = "windows")]
             #[link_section = ".rsdata$zRSETW5"]
-            #[allow(non_upper_case_globals)]
+            #[allow(non_upper_case_globals, dead_code)]
             static mut [<ETW_META_PTR $name>]: *const $crate::_details::EventMetadata = &ETW_META;
         }
 

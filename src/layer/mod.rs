@@ -9,7 +9,7 @@ use tracing::Subscriber;
 use tracing_core::callsite;
 use tracing_subscriber::registry::LookupSpan;
 
-use crate::{native::{EventWriter, ProviderTypes}, statics::EVENT_METADATA};
+use crate::{native::{EventWriter, ProviderTypes}, statics::get_event_metadata};
 
 pub(crate) struct _EtwLayer<S, Mode: ProviderTypes>
 where
@@ -59,7 +59,7 @@ where
     Mode::Provider: EventWriter<Mode> + 'static,
 {
     fn is_enabled(&self, callsite: &callsite::Identifier, level: &tracing_core::Level) -> bool {
-        let etw_meta = EVENT_METADATA.get(callsite);
+        let etw_meta = get_event_metadata(callsite);
         let keyword = if let Some(meta) = etw_meta {
             meta.kw
         } else {

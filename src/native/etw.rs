@@ -13,7 +13,7 @@ pub(crate) static mut _start__etw_kw: usize = usize::from_ne_bytes(*b"RSETW000")
 #[link_section = ".rsdata$zRSETW9"]
 pub(crate) static mut _stop__etw_kw: usize = usize::from_ne_bytes(*b"RSETW999");
 
-thread_local! {static EBW: std::cell::RefCell<EventBuilder>  = RefCell::new(EventBuilder::new());}
+thread_local! {static EBW: RefCell<EventBuilder>  = const { RefCell::new(EventBuilder::new()) } }
 
 struct Win32SystemTime {
     st: [u16; 8],

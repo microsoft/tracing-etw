@@ -41,6 +41,9 @@ pub(crate) use tracelogging_dynamic::Guid as native_guid;
 #[cfg(target_os = "linux")]
 pub(crate) use eventheader::Guid as native_guid;
 
+// Used to detect the noop implementation, for testing purposes
+pub(crate) const MAGIC_STATICS_SENTINEL: usize = usize::from_ne_bytes(*b"NO-OPT00");
+
 use crate::error::EtwError;
 
 #[doc(hidden)]

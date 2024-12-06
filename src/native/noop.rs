@@ -4,10 +4,11 @@ use tracing_subscriber::registry::{LookupSpan, SpanRef};
 
 use crate::error::EtwError;
 
+// We use this magic value to determine
 #[allow(non_upper_case_globals)]
-pub(crate) static mut _start__etw_kw: usize = 0;
+pub(crate) static _start__etw_kw: usize = super::MAGIC_STATICS_SENTINEL;
 #[allow(non_upper_case_globals)]
-pub(crate) static mut _stop__etw_kw: usize = 0;
+pub(crate) static _stop__etw_kw: usize = super::MAGIC_STATICS_SENTINEL;
 
 #[doc(hidden)]
 pub struct Provider;

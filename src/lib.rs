@@ -215,7 +215,6 @@ macro_rules! etw_event {
         };
 
         // These two statics need to be mut to avoid compiler errors about *const EventMetadata not being Sync.
-        // It's unclear why mut avoids these errors.
 
         paste! {
             #[cfg(target_os = "linux")]
@@ -227,7 +226,7 @@ macro_rules! etw_event {
 
         paste! {
             #[cfg(target_os = "windows")]
-            #[link_section = ".rsdata$zRSETW5"]
+            #[link_section = ".rdata$zRSETW5"]
             #[allow(non_upper_case_globals)]
             #[used]
             static mut [<ETW_META_PTR $name>]: *const $crate::_details::EventMetadata = &ETW_META;

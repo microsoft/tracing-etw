@@ -6,13 +6,13 @@ use tracelogging::*;
 use tracelogging_dynamic::EventBuilder;
 use tracing_subscriber::registry::{LookupSpan, SpanRef};
 
-// Items within this .rsdata section will be sorted alphabetically, thus the start is named with "0", the end "9", and each metadata "5".
+// Items within this .rdata section will be sorted alphabetically, thus the start is named with "0", the end "9", and each metadata "5".
 // If these statics aren't mut then everything will silently fail to work.
 #[allow(non_upper_case_globals)]
-#[link_section = ".rsdata$zRSETW0"]
+#[link_section = ".rdata$zRSETW0"]
 pub(crate) static mut _start__etw_kw: usize = 0;
 #[allow(non_upper_case_globals)]
-#[link_section = ".rsdata$zRSETW9"]
+#[link_section = ".rdata$zRSETW9"]
 pub(crate) static mut _stop__etw_kw: usize = 0;
 
 thread_local! {static EBW: std::cell::RefCell<EventBuilder>  = RefCell::new(EventBuilder::new());}

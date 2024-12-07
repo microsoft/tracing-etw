@@ -15,12 +15,6 @@ pub mod noop;
 #[cfg(not(any(target_os = "windows", target_os = "linux")))]
 #[doc(hidden)]
 pub use noop::Provider;
-#[cfg(not(any(target_os = "windows", target_os = "linux")))]
-#[doc(hidden)]
-pub(crate) use noop::_start__etw_kw;
-#[cfg(not(any(target_os = "windows", target_os = "linux")))]
-#[doc(hidden)]
-pub(crate) use noop::_stop__etw_kw;
 
 #[cfg(target_os = "linux")]
 #[doc(hidden)]
@@ -40,9 +34,6 @@ pub(crate) mod common_schema;
 pub(crate) use tracelogging_dynamic::Guid as native_guid;
 #[cfg(target_os = "linux")]
 pub(crate) use eventheader::Guid as native_guid;
-
-// Used to detect the noop implementation, for testing purposes
-pub(crate) const MAGIC_STATICS_SENTINEL: usize = usize::from_ne_bytes(*b"NO-OPT00");
 
 use crate::error::EtwError;
 

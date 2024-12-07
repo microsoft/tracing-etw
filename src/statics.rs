@@ -19,7 +19,7 @@ pub(crate) static GLOBAL_ACTIVITY_SEED: LazyLock<[u8; 16]> = LazyLock::new(|| {
         data
     });
 
-static EVENT_METADATA: LazyLock<Box<[ParsedEventMetadata]>> = LazyLock::new(|| {
+fn process_static_metadata() -> Box<[ParsedEventMetadata]> {
     // The array of pointers are in a mutable section and can be sorted/deduped, but they are pointing to read-only static data
 
     let start =
@@ -27,7 +27,9 @@ static EVENT_METADATA: LazyLock<Box<[ParsedEventMetadata]>> = LazyLock::new(|| {
     let stop =
         &raw const crate::native::_stop__etw_kw as *mut *const EventMetadata;
 
-    assert!(!start.is_null());
+    if start.is_null() {
+        return Box::new([]);
+    }
 
     // SAFETY On Windows the start and stop entries are sentry values at the start and end of the linker section.
     // Linux does not need these sentries.
@@ -94,7 +96,13 @@ static EVENT_METADATA: LazyLock<Box<[ParsedEventMetadata]>> = LazyLock::new(|| {
     let mut sorted = vec.into_boxed_slice();
     sorted.sort_unstable_by(|a, b| b.cmp(a));
     sorted
-});
+}
+
+#[cfg(any(target_os = "windows", target_os = "linux"))]
+static EVENT_METADATA: LazyLock<Box<[ParsedEventMetadata]>> = LazyLock::new(process_static_metadata);
+
+#[cfg(not(any(target_os = "windows", target_os = "linux")))]
+static EVENT_METADATA: [ParsedEventMetadata; 0] = [];
 
 impl core::cmp::PartialEq for ParsedEventMetadata {
     fn eq(&self, other: &Self) -> bool {
@@ -212,6 +220,11 @@ mod test {
             sum += event.kw;
         }
 
-        assert_eq!(sum, 55);
+        #[cfg(any(target_os = "windows", target_os = "linux"))]
+        let expected = 55;
+        #[cfg(not(any(target_os = "windows", target_os = "linux")))]
+        let expected = 0;
+
+        assert_eq!(sum, expected);
     }
 }

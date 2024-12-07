@@ -15,12 +15,6 @@ pub mod noop;
 #[cfg(not(any(target_os = "windows", target_os = "linux")))]
 #[doc(hidden)]
 pub use noop::Provider;
-#[cfg(not(any(target_os = "windows", target_os = "linux")))]
-#[doc(hidden)]
-pub(crate) use noop::_start__etw_kw;
-#[cfg(not(any(target_os = "windows", target_os = "linux")))]
-#[doc(hidden)]
-pub(crate) use noop::_stop__etw_kw;
 
 #[cfg(target_os = "linux")]
 #[doc(hidden)]

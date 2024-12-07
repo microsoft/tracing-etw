@@ -4,11 +4,6 @@ use tracing_subscriber::registry::{LookupSpan, SpanRef};
 
 use crate::error::EtwError;
 
-#[allow(non_upper_case_globals)]
-pub(crate) static mut _start__etw_kw: usize = 0;
-#[allow(non_upper_case_globals)]
-pub(crate) static mut _stop__etw_kw: usize = 0;
-
 #[doc(hidden)]
 pub struct Provider;
 

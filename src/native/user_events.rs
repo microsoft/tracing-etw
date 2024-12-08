@@ -1,4 +1,4 @@
-use crate::values::*;
+use crate::values::{*, event_values::*};
 use crate::statics::GLOBAL_ACTIVITY_SEED;
 use crate::error::EtwError;
 use eventheader::*;
@@ -20,7 +20,7 @@ static mut ETW_META_PTR: *const crate::_details::EventMetadata = core::ptr::null
 
 thread_local! {static EBW: std::cell::RefCell<EventBuilder>  = RefCell::new(EventBuilder::new());}
 
-impl<T> AddFieldAndValue<T> for &'_ mut eventheader_dynamic::EventBuilder {
+impl AddFieldAndValue for &'_ mut eventheader_dynamic::EventBuilder {
     fn add_field_value(&mut self, fv: &FieldAndValue) {
         match fv.value {
             ValueTypes::None => (),
@@ -199,7 +199,7 @@ impl crate::native::EventWriter<Provider> for Provider {
         timestamp: SystemTime,
         activity_id: &[u8; 16],
         related_activity_id: &[u8; 16],
-        fields: &'b [crate::values::FieldValueIndex],
+        fields: &'b [crate::values::span_values::FieldValueIndex],
         level: &tracing_core::Level,
         keyword: u64,
         event_tag: u32,
@@ -231,7 +231,7 @@ impl crate::native::EventWriter<Provider> for Provider {
             );
 
             for f in fields {
-                <&mut EventBuilder as AddFieldAndValue<EventBuilder>>::add_field_value(
+                <&mut EventBuilder as AddFieldAndValue>::add_field_value(
                     &mut eb.deref_mut(),
                     &FieldAndValue {
                         field_name: f.field,
@@ -262,7 +262,7 @@ impl crate::native::EventWriter<Provider> for Provider {
         start_stop_times: (std::time::SystemTime, std::time::SystemTime),
         activity_id: &[u8; 16],
         related_activity_id: &[u8; 16],
-        fields: &'b [crate::values::FieldValueIndex],
+        fields: &'b [crate::values::span_values::FieldValueIndex],
         level: &tracing_core::Level,
         keyword: u64,
         event_tag: u32,
@@ -295,7 +295,7 @@ impl crate::native::EventWriter<Provider> for Provider {
             );
 
             for f in fields {
-                <&mut EventBuilder as AddFieldAndValue<EventBuilder>>::add_field_value(
+                <&mut EventBuilder as AddFieldAndValue>::add_field_value(
                     &mut eb.deref_mut(),
                     &FieldAndValue {
                         field_name: f.field,
@@ -371,7 +371,7 @@ impl crate::native::EventWriter<Provider> for Provider {
                 0,
             );
 
-            let mut visitor = VisitorWrapper::from(eb.deref_mut());
+            let mut visitor = EventBuilderVisitorWrapper::from(eb.deref_mut());
             event.record(&mut visitor);
 
             let _ = eb.write(

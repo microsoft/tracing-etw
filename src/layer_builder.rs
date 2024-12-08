@@ -256,3 +256,31 @@ where
         Ok(layer.with_filter(filter.and(targets)))
     }
 }
+
+#[cfg(test)]
+mod test {
+    use tracing_subscriber::{self, prelude::*};
+
+    use crate::native::GuidWrapper;
+
+    use super::LayerBuilder;
+
+    #[test]
+    fn build_normal() {
+        tracing_subscriber::registry()
+        .with(LayerBuilder::new("test_build_normal").build().unwrap());
+    }
+
+    #[test]
+    fn build_with_target() {
+        tracing_subscriber::registry()
+        .with(LayerBuilder::new("test_build_with_target").with_default_keyword(5).build_with_target("asdf").unwrap());
+    }
+
+    #[test]
+    fn build_provider_id() {
+        let provider_id = GuidWrapper::from_name("name");
+        tracing_subscriber::registry()
+        .with(LayerBuilder::new("test_build_provider_id").with_provider_id(&provider_id).build().unwrap());
+    }
+}

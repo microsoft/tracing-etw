@@ -1,4 +1,4 @@
-use crate::{error::EtwError, values::*};
+use crate::{error::EtwError, values::{*, event_values::*}};
 use std::{
     cell::RefCell,
     io::{Cursor, Write},
@@ -19,12 +19,12 @@ pub(crate) struct CommonSchemaPartCBuilder<'a> {
 }
 
 impl<'a> CommonSchemaPartCBuilder<'a> {
-    fn make_visitor(eb: &'a mut EventBuilder) -> VisitorWrapper<CommonSchemaPartCBuilder<'a>> {
-        VisitorWrapper::from(CommonSchemaPartCBuilder { eb })
+    fn make_visitor(eb: &'a mut EventBuilder) -> EventBuilderVisitorWrapper<CommonSchemaPartCBuilder<'a>> {
+        EventBuilderVisitorWrapper::from(CommonSchemaPartCBuilder { eb })
     }
 }
 
-impl<T> AddFieldAndValue<T> for CommonSchemaPartCBuilder<'_> {
+impl AddFieldAndValue for CommonSchemaPartCBuilder<'_> {
     fn add_field_value(&mut self, fv: &FieldAndValue) {
         let mut field_name: &'static str = fv.field_name;
 
@@ -33,7 +33,7 @@ impl<T> AddFieldAndValue<T> for CommonSchemaPartCBuilder<'_> {
             assert!(matches!(fv.value, ValueTypes::v_str(_)));
         }
 
-        <&mut EventBuilder as AddFieldAndValue<EventBuilder>>::add_field_value(
+        <&mut EventBuilder as AddFieldAndValue>::add_field_value(
             &mut self.eb,
             &FieldAndValue {
                 field_name,
@@ -83,7 +83,7 @@ impl CommonSchemaProvider {
 
 impl crate::native::ProviderTypes for CommonSchemaProvider {
     type Provider = Self;
-    type ProviderGroupType = tracelogging_dynamic::Guid;
+    type ProviderGroupType = crate::native::native_guid;
 
     #[inline(always)]
     fn supports_enable_callback() -> bool {
@@ -141,7 +141,7 @@ impl crate::native::EventWriter<CommonSchemaProvider> for CommonSchemaProvider {
         _timestamp: SystemTime,
         _activity_id: &[u8; 16],
         _related_activity_id: &[u8; 16],
-        _fields: &'b [crate::values::FieldValueIndex],
+        _fields: &'b [crate::values::span_values::FieldValueIndex],
         _level: &tracing_core::Level,
         _keyword: u64,
         _event_tag: u32,
@@ -156,7 +156,7 @@ impl crate::native::EventWriter<CommonSchemaProvider> for CommonSchemaProvider {
         start_stop_times: (std::time::SystemTime, std::time::SystemTime),
         _activity_id: &[u8; 16],
         _related_activity_id: &[u8; 16],
-        fields: &'b [crate::values::FieldValueIndex],
+        fields: &'b [crate::values::span_values::FieldValueIndex],
         level: &tracing_core::Level,
         keyword: u64,
         event_tag: u32,
@@ -245,9 +245,7 @@ impl crate::native::EventWriter<CommonSchemaProvider> for CommonSchemaProvider {
                 let mut pfv = CommonSchemaPartCBuilder { eb: eb.deref_mut() };
 
                 for f in fields {
-                    <CommonSchemaPartCBuilder<'_> as AddFieldAndValue<
-                        CommonSchemaPartCBuilder<'_>,
-                    >>::add_field_value(
+                    <CommonSchemaPartCBuilder<'_> as AddFieldAndValue>::add_field_value(
                         &mut pfv,
                         &FieldAndValue {
                             field_name: f.field,

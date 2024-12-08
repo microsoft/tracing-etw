@@ -5,11 +5,7 @@ use tracing::Subscriber;
 use tracing_core::{callsite, span};
 use tracing_subscriber::{registry::LookupSpan, Layer};
 
-use crate::{
-    native::{EventWriter, ProviderTypes},
-    statics::*,
-    values::*,
-};
+use crate::{native::{EventWriter, ProviderTypes}, statics::*, values::{*, span_values::*}};
 
 use super::*;
 
@@ -65,8 +61,7 @@ where
         metadata: &tracing::Metadata<'_>,
         _ctx: tracing_subscriber::layer::Context<'_, S>,
     ) -> bool {
-        self.layer
-            .is_enabled(&metadata.callsite(), metadata.level())
+        self.layer.is_enabled(&metadata.callsite(), metadata.level())
     }
 
     #[cfg(any(feature = "global_filter", docsrs))]
@@ -75,8 +70,7 @@ where
         event: &tracing::Event<'_>,
         _ctx: tracing_subscriber::layer::Context<'_, S>,
     ) -> bool {
-        self.layer
-            .is_enabled(&event.metadata().callsite(), event.metadata().level())
+        self.layer.is_enabled(&event.metadata().callsite(), event.metadata().level())
     }
 
     fn on_event(&self, event: &tracing::Event<'_>, ctx: tracing_subscriber::layer::Context<'_, S>) {
@@ -180,7 +174,7 @@ where
             0
         };
 
-        attrs.values().record(&mut ValueVisitor {
+        attrs.values().record(&mut SpanValueVisitor {
             fields: &mut data.fields,
         });
 
@@ -296,7 +290,7 @@ where
             return;
         };
 
-        values.record(&mut ValueVisitor {
+        values.record(&mut SpanValueVisitor {
             fields: &mut data.fields,
         });
     }

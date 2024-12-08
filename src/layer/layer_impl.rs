@@ -5,7 +5,11 @@ use tracing::Subscriber;
 use tracing_core::{callsite, span};
 use tracing_subscriber::{registry::LookupSpan, Layer};
 
-use crate::{native::{EventWriter, ProviderTypes}, statics::*, values::{*, span_values::*}};
+use crate::{
+    native::{EventWriter, ProviderTypes},
+    statics::*,
+    values::{span_values::*, *},
+};
 
 use super::*;
 

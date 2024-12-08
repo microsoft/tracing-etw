@@ -1,5 +1,5 @@
-pub(crate) mod span_values;
 pub(crate) mod event_values;
+pub(crate) mod span_values;
 
 use std::borrow::Cow;
 

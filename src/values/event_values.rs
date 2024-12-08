@@ -15,15 +15,13 @@ pub(crate) struct EventBuilderVisitorWrapper<T: AddFieldAndValue> {
 }
 
 // Construct a wrapper from the EventBuilder type
-impl<T: AddFieldAndValue> From<T> for EventBuilderVisitorWrapper<T>
-{
+impl<T: AddFieldAndValue> From<T> for EventBuilderVisitorWrapper<T> {
     fn from(value: T) -> Self {
         EventBuilderVisitorWrapper { wrapped: value }
     }
 }
 
-impl<T: AddFieldAndValue> field::Visit for EventBuilderVisitorWrapper<T>
-{
+impl<T: AddFieldAndValue> field::Visit for EventBuilderVisitorWrapper<T> {
     fn record_debug(&mut self, field: &field::Field, value: &dyn std::fmt::Debug) {
         let mut string = String::with_capacity(10);
         if write!(string, "{:?}", value).is_err() {

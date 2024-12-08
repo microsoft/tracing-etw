@@ -1,6 +1,5 @@
-use crate::values::{*, event_values::*};
 use crate::error::EtwError;
-use crate::values::*;
+use crate::values::{event_values::*, *};
 use eventheader::*;
 use eventheader_dynamic::EventBuilder;
 use std::{

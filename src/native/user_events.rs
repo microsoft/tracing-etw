@@ -1,8 +1,6 @@
-use crate::values::{*, event_values::*};
-use crate::statics::GLOBAL_ACTIVITY_SEED;
 use crate::error::EtwError;
 use crate::statics::GLOBAL_ACTIVITY_SEED;
-use crate::values::*;
+use crate::values::{event_values::*, *};
 use eventheader::*;
 use eventheader_dynamic::EventBuilder;
 use std::{cell::RefCell, ops::DerefMut, pin::Pin, sync::Arc, time::SystemTime};

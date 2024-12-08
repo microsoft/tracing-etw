@@ -1,4 +1,7 @@
-use crate::{error::EtwError, values::{*, event_values::*}};
+use crate::{
+    error::EtwError,
+    values::{event_values::*, *},
+};
 use std::{
     cell::RefCell,
     io::{Cursor, Write},

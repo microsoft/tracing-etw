@@ -1,6 +1,8 @@
-use crate::{error::EtwError, values::{*, event_values::*}};
 use crate::statics::GLOBAL_ACTIVITY_SEED;
-use crate::{error::EtwError, values::*};
+use crate::{
+    error::EtwError,
+    values::{event_values::*, *},
+};
 use chrono::{Datelike, Timelike};
 use std::{cell::RefCell, ops::DerefMut, pin::Pin, sync::Arc, time::SystemTime};
 use tracelogging::*;

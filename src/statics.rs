@@ -4,28 +4,26 @@ use std::{cmp, hash::BuildHasher, iter::FusedIterator, sync::LazyLock};
 
 use crate::_details::{EventMetadata, ParsedEventMetadata};
 
-type FnvHasher = std::hash::BuildHasherDefault::<hashers::fnv::FNV1aHasher64>;
+type FnvHasher = std::hash::BuildHasherDefault<hashers::fnv::FNV1aHasher64>;
 
 pub(crate) static GLOBAL_ACTIVITY_SEED: LazyLock<[u8; 16]> = LazyLock::new(|| {
-        let now = std::time::SystemTime::now()
-            .duration_since(std::time::SystemTime::UNIX_EPOCH)
-            .unwrap()
-            .as_nanos();
-        let seed = (now >> 64) as u64 | now as u64;
-        let mut data = [0; 16];
-        let (seed_half, _) = data.split_at_mut(8);
-        seed_half.copy_from_slice(&seed.to_le_bytes());
-        data[0] = 0;
-        data
-    });
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::SystemTime::UNIX_EPOCH)
+        .unwrap()
+        .as_nanos();
+    let seed = (now >> 64) as u64 | now as u64;
+    let mut data = [0; 16];
+    let (seed_half, _) = data.split_at_mut(8);
+    seed_half.copy_from_slice(&seed.to_le_bytes());
+    data[0] = 0;
+    data
+});
 
 fn process_static_metadata() -> Box<[ParsedEventMetadata]> {
     // The array of pointers are in a mutable section and can be sorted/deduped, but they are pointing to read-only static data
 
-    let start =
-        &raw const crate::native::_start__etw_kw as *mut *const EventMetadata;
-    let stop =
-        &raw const crate::native::_stop__etw_kw as *mut *const EventMetadata;
+    let start = &raw const crate::native::_start__etw_kw as *mut *const EventMetadata;
+    let stop = &raw const crate::native::_stop__etw_kw as *mut *const EventMetadata;
 
     if start.is_null() {
         return Box::new([]);
@@ -40,8 +38,7 @@ fn process_static_metadata() -> Box<[ParsedEventMetadata]> {
 
     // SAFETY Start is not null and points to a valid static in memory (else the code wouldn't link),
     // so we can guarantee we aren't making a reference to null here.
-    let events_slice = unsafe {
-        &mut *core::ptr::slice_from_raw_parts_mut(start, stop_offset) };
+    let events_slice = unsafe { &mut *core::ptr::slice_from_raw_parts_mut(start, stop_offset) };
 
     if events_slice.is_empty() {
         return Box::new([]);
@@ -89,7 +86,10 @@ fn process_static_metadata() -> Box<[ParsedEventMetadata]> {
         // SAFETY The above code as already validated that events_slice[0..good_pos] are non-null pointers
         let next = unsafe { &*events_slice[next_pos] };
         let identity_hash = bh.hash_one(&next.identity);
-        vec.push(ParsedEventMetadata { identity_hash, meta: next });
+        vec.push(ParsedEventMetadata {
+            identity_hash,
+            meta: next,
+        });
         next_pos += 1;
     }
 
@@ -99,7 +99,8 @@ fn process_static_metadata() -> Box<[ParsedEventMetadata]> {
 }
 
 #[cfg(any(target_os = "windows", target_os = "linux"))]
-static EVENT_METADATA: LazyLock<Box<[ParsedEventMetadata]>> = LazyLock::new(process_static_metadata);
+static EVENT_METADATA: LazyLock<Box<[ParsedEventMetadata]>> =
+    LazyLock::new(process_static_metadata);
 
 #[cfg(not(any(target_os = "windows", target_os = "linux")))]
 static EVENT_METADATA: [ParsedEventMetadata; 0] = [];
@@ -125,12 +126,14 @@ impl core::cmp::Ord for ParsedEventMetadata {
     }
 }
 
-pub(crate) fn get_event_metadata(id: &tracing::callsite::Identifier) -> Option<&'static crate::_details::EventMetadata> {
+pub(crate) fn get_event_metadata(
+    id: &tracing::callsite::Identifier,
+) -> Option<&'static crate::_details::EventMetadata> {
     let bh = FnvHasher::default();
     let identity_hash = bh.hash_one(id);
     let idx = EVENT_METADATA.partition_point(|other| other.identity_hash > identity_hash);
     let mut cur = idx;
-    while cur <EVENT_METADATA.len() {
+    while cur < EVENT_METADATA.len() {
         let meta = &EVENT_METADATA[cur];
         if meta.identity_hash != identity_hash {
             return None;
@@ -146,7 +149,7 @@ pub(crate) fn get_event_metadata(id: &tracing::callsite::Identifier) -> Option<&
 }
 
 pub(crate) struct EventMetadataEnumerator {
-    current_index: usize
+    current_index: usize,
 }
 
 impl FusedIterator for EventMetadataEnumerator {}
@@ -169,8 +172,9 @@ impl Iterator for EventMetadataEnumerator {
 
 #[allow(dead_code)]
 // Currently only used on Linux targets and the tests
-pub(crate) fn event_metadata() -> impl Iterator<Item = <EventMetadataEnumerator as Iterator>::Item> {
-    EventMetadataEnumerator{current_index: 0}
+pub(crate) fn event_metadata() -> impl Iterator<Item = <EventMetadataEnumerator as Iterator>::Item>
+{
+    EventMetadataEnumerator { current_index: 0 }
 }
 
 // Only one test function can be compiled into the module at a time, since the statics the macro produces are global

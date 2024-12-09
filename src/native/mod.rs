@@ -30,10 +30,10 @@ pub(crate) use user_events::_stop__etw_kw;
 #[cfg(feature = "common_schema")]
 pub(crate) mod common_schema;
 
-#[cfg(not(target_os = "linux"))]
-pub(crate) use tracelogging_dynamic::Guid as native_guid;
 #[cfg(target_os = "linux")]
 pub(crate) use eventheader::Guid as native_guid;
+#[cfg(not(target_os = "linux"))]
+pub(crate) use tracelogging_dynamic::Guid as native_guid;
 
 use crate::error::EtwError;
 

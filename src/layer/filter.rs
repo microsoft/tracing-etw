@@ -1,7 +1,10 @@
 use tracing::Subscriber;
 use tracing_subscriber::{layer::Filter, registry::LookupSpan};
 
-use crate::{native::{EventWriter, ProviderTypes}, statics::get_event_metadata};
+use crate::{
+    native::{EventWriter, ProviderTypes},
+    statics::get_event_metadata,
+};
 
 use super::*;
 
@@ -40,7 +43,8 @@ where
         metadata: &tracing::Metadata<'_>,
         _cx: &tracing_subscriber::layer::Context<'_, S>,
     ) -> bool {
-        self.layer.is_enabled(&metadata.callsite(), metadata.level())
+        self.layer
+            .is_enabled(&metadata.callsite(), metadata.level())
     }
 
     fn event_enabled(
@@ -48,6 +52,7 @@ where
         event: &tracing::Event<'_>,
         _cx: &tracing_subscriber::layer::Context<'_, S>,
     ) -> bool {
-        self.layer.is_enabled(&event.metadata().callsite(), event.metadata().level())
+        self.layer
+            .is_enabled(&event.metadata().callsite(), event.metadata().level())
     }
 }

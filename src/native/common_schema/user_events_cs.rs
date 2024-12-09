@@ -1,5 +1,5 @@
-use crate::values::*;
 use crate::error::EtwError;
+use crate::values::*;
 use eventheader::*;
 use eventheader_dynamic::EventBuilder;
 use std::{
@@ -60,10 +60,10 @@ impl crate::native::ProviderTypes for CommonSchemaProvider {
 
     fn is_valid(value: &Self::ProviderGroupType) -> Result<(), EtwError> {
         if !eventheader_dynamic::ProviderOptions::is_valid_option_value(value) {
-            Err(EtwError::InvalidProviderGroupCharacters(value.clone().into()))
-        }
-        else
-        {
+            Err(EtwError::InvalidProviderGroupCharacters(
+                value.clone().into(),
+            ))
+        } else {
             Ok(())
         }
     }
@@ -104,7 +104,9 @@ impl CommonSchemaProvider {
             tracing_core::Level::WARN => eventheader_dynamic::Level::Warning,
             tracing_core::Level::INFO => eventheader_dynamic::Level::Informational,
             tracing_core::Level::DEBUG => eventheader_dynamic::Level::Verbose,
-            tracing_core::Level::TRACE => eventheader_dynamic::Level::from_int(eventheader_dynamic::Level::Verbose.as_int() + 1),
+            tracing_core::Level::TRACE => eventheader_dynamic::Level::from_int(
+                eventheader_dynamic::Level::Verbose.as_int() + 1,
+            ),
         }
     }
 }
@@ -127,48 +129,18 @@ impl crate::native::EventWriter<CommonSchemaProvider> for CommonSchemaProvider {
 
         // Keywords are static, but levels are dynamic so we have to register them all
         for event in crate::statics::event_metadata() {
-            provider.register_set(
-                Self::map_level(&tracing::Level::ERROR),
-                event.kw,
-            );
-            provider.register_set(
-                Self::map_level(&tracing::Level::WARN),
-                event.kw,
-            );
-            provider.register_set(
-                Self::map_level(&tracing::Level::INFO),
-                event.kw,
-            );
-            provider.register_set(
-                Self::map_level(&tracing::Level::DEBUG),
-                event.kw,
-            );
-            provider.register_set(
-                Self::map_level(&tracing::Level::TRACE),
-                event.kw,
-            );
+            provider.register_set(Self::map_level(&tracing::Level::ERROR), event.kw);
+            provider.register_set(Self::map_level(&tracing::Level::WARN), event.kw);
+            provider.register_set(Self::map_level(&tracing::Level::INFO), event.kw);
+            provider.register_set(Self::map_level(&tracing::Level::DEBUG), event.kw);
+            provider.register_set(Self::map_level(&tracing::Level::TRACE), event.kw);
         }
 
-        provider.register_set(
-            Self::map_level(&tracing::Level::ERROR),
-            default_keyword,
-        );
-        provider.register_set(
-            Self::map_level(&tracing::Level::WARN),
-            default_keyword,
-        );
-        provider.register_set(
-            Self::map_level(&tracing::Level::INFO),
-            default_keyword,
-        );
-        provider.register_set(
-            Self::map_level(&tracing::Level::DEBUG),
-            default_keyword,
-        );
-        provider.register_set(
-            Self::map_level(&tracing::Level::TRACE),
-            default_keyword,
-        );
+        provider.register_set(Self::map_level(&tracing::Level::ERROR), default_keyword);
+        provider.register_set(Self::map_level(&tracing::Level::WARN), default_keyword);
+        provider.register_set(Self::map_level(&tracing::Level::INFO), default_keyword);
+        provider.register_set(Self::map_level(&tracing::Level::DEBUG), default_keyword);
+        provider.register_set(Self::map_level(&tracing::Level::TRACE), default_keyword);
 
         Arc::pin(Self {
             provider: std::sync::RwLock::new(provider),
@@ -182,7 +154,11 @@ impl crate::native::EventWriter<CommonSchemaProvider> for CommonSchemaProvider {
             .read()
             .unwrap()
             .find_set(Self::map_level(level), keyword);
-        if let Some(s) = es { s.enabled() } else { false }
+        if let Some(s) = es {
+            s.enabled()
+        } else {
+            false
+        }
     }
 
     fn span_start<'a, 'b, R>(

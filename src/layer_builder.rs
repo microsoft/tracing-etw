@@ -7,9 +7,9 @@ use tracing::metadata::LevelFilter;
 use tracing::Subscriber;
 #[allow(unused_imports)]
 use tracing_subscriber::filter::{combinator::And, FilterExt, Filtered, Targets};
-#[allow(unused_imports)]
-use tracing_subscriber::{Layer, layer::Filter};
 use tracing_subscriber::registry::LookupSpan;
+#[allow(unused_imports)]
+use tracing_subscriber::{layer::Filter, Layer};
 
 #[cfg(any(not(feature = "global_filter"), docsrs))]
 use crate::layer::EtwFilter;
@@ -23,18 +23,18 @@ use crate::{error::EtwError, native};
 /// additional properties for the provider, such as the keyword to use
 /// for events (default: 1) or a specific provider GUID (default: a hash of
 /// the provider name).
-/// 
+///
 /// Use [LayerBuilder::new_common_schema_events] to create a layer that
 /// will log events in the Common Schema 4.0 mapping. Only use this if
 /// you know that you need events in this format.
-/// 
+///
 /// Multiple `tracing_etw` layers can be created at the same time,
 /// with different provider names/IDs, keywords, or output formats.
 /// (Target filters)[tracing_subscriber::filter] can then be used to direct
 /// specific events to specific layers.
 pub struct LayerBuilder<Mode>
 where
-    Mode: ProviderTypes
+    Mode: ProviderTypes,
 {
     provider_name: String,
     provider_id: GuidWrapper,
@@ -64,9 +64,7 @@ impl LayerBuilder<native::common_schema::Provider> {
     /// may perform worse. Common Schema events are much slower to generate
     /// and should not be enabled unless absolutely necessary.
     #[cfg(any(feature = "common_schema", docsrs))]
-    pub fn new_common_schema_events(
-        name: &str,
-    ) -> LayerBuilder<native::common_schema::Provider> {
+    pub fn new_common_schema_events(name: &str) -> LayerBuilder<native::common_schema::Provider> {
         LayerBuilder::<native::common_schema::Provider> {
             provider_name: name.to_owned(),
             provider_id: GuidWrapper::from_name(name),
@@ -86,7 +84,7 @@ where
     /// one generated from the provider name.
     pub fn with_provider_id<G>(mut self, guid: &G) -> Self
     where
-        for<'a> &'a G: Into<GuidWrapper>
+        for<'a> &'a G: Into<GuidWrapper>,
     {
         self.provider_id = guid.into();
         self
@@ -100,13 +98,13 @@ where
     }
 
     /// Set the keyword used for events that do not explicitly set a keyword.
-    /// 
+    ///
     /// Events logged with the [crate::etw_event!] macro specify a keyword for the event.
     /// Events and spans logged with the [tracing::event!], [tracing::span!],
     /// or other similar `tracing` macros will use the default keyword.
-    /// 
+    ///
     /// If this method is not called, the default keyword will be `1`.
-    /// 
+    ///
     /// Keyword value `0` is special in ETW (but not user_events), and should
     /// not be used.
     pub fn with_default_keyword(mut self, kw: u64) -> Self {
@@ -118,7 +116,7 @@ where
     /// Set the provider group to join this provider to.
     pub fn with_provider_group<G>(mut self, group_id: &G) -> Self
     where
-        for <'a> &'a G: Into<Mode::ProviderGroupType>,
+        for<'a> &'a G: Into<Mode::ProviderGroupType>,
     {
         self.provider_group = Some(group_id.into());
         self
@@ -133,22 +131,26 @@ where
             {
                 // The perf command is very particular about the provider names it accepts.
                 // The Linux kernel itself cares less, and other event consumers should also presumably not need this check.
-                return Err(EtwError::InvalidProviderNameCharacters(self.provider_name.clone()));
+                return Err(EtwError::InvalidProviderNameCharacters(
+                    self.provider_name.clone(),
+                ));
             }
 
             let group_name_len = match &self.provider_group {
                 None => 0,
-                Some(ref name) => Mode::get_provider_group(&name).as_ref().len()
+                Some(ref name) => Mode::get_provider_group(&name).as_ref().len(),
             };
 
             if self.provider_name.len() + group_name_len >= 234 {
-                return Err(EtwError::TooManyCharacters(self.provider_name.len() + group_name_len));
+                return Err(EtwError::TooManyCharacters(
+                    self.provider_name.len() + group_name_len,
+                ));
             }
         }
 
         match &self.provider_group {
             None => Ok(()),
-            Some(value) => Mode::is_valid(value)
+            Some(value) => Mode::is_valid(value),
         }
     }
 
@@ -160,7 +162,8 @@ where
         match self.provider_group {
             None => {}
             Some(ref name) => {
-                targets = targets.with_target(Mode::get_provider_group(name).as_ref(), LevelFilter::TRACE);
+                targets = targets
+                    .with_target(Mode::get_provider_group(name).as_ref(), LevelFilter::TRACE);
             }
         }
 
@@ -186,7 +189,7 @@ where
                 ),
                 default_keyword: self.default_keyword,
                 _p: PhantomData,
-            }
+            },
         }
     }
 
@@ -196,9 +199,7 @@ where
         S: Subscriber + for<'a> LookupSpan<'a>,
         Mode::Provider: EventWriter<Mode> + 'static,
     {
-        EtwFilter::<S, Mode> {
-            layer
-        }
+        EtwFilter::<S, Mode> { layer }
     }
 
     #[cfg_attr(docsrs, doc(cfg(feature = "global_filter")))]

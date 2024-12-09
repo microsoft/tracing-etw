@@ -9,5 +9,5 @@ pub enum EtwError {
     #[error("Linux provider names must be ASCII alphanumeric: {0:?}")]
     InvalidProviderNameCharacters(String),
     #[error("Linux provider name and provider group must less than 234 characters combined. Current length: {0:?}")]
-    TooManyCharacters(usize)
+    TooManyCharacters(usize),
 }

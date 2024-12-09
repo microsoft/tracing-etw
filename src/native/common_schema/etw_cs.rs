@@ -74,7 +74,9 @@ impl CommonSchemaProvider {
             tracing_core::Level::WARN => tracelogging::Level::Warning,
             tracing_core::Level::INFO => tracelogging::Level::Informational,
             tracing_core::Level::DEBUG => tracelogging::Level::Verbose,
-            tracing_core::Level::TRACE => tracelogging::Level::from_int(tracelogging::Level::Verbose.as_int() + 1),
+            tracing_core::Level::TRACE => {
+                tracelogging::Level::from_int(tracelogging::Level::Verbose.as_int() + 1)
+            }
         }
     }
 }
@@ -91,8 +93,7 @@ impl crate::native::ProviderTypes for CommonSchemaProvider {
     fn is_valid(value: &Self::ProviderGroupType) -> Result<(), EtwError> {
         if value == &crate::native::native_guid::zero() {
             Err(EtwError::EmptyProviderGroupGuid)
-        }
-        else {
+        } else {
             Ok(())
         }
     }
@@ -131,8 +132,7 @@ impl crate::native::EventWriter<CommonSchemaProvider> for CommonSchemaProvider {
 
     #[inline]
     fn enabled(&self, level: &tracing_core::Level, keyword: u64) -> bool {
-        self.provider
-            .enabled(Self::map_level(level), keyword)
+        self.provider.enabled(Self::map_level(level), keyword)
     }
 
     fn span_start<'a, 'b, R>(
@@ -316,9 +316,7 @@ impl crate::native::EventWriter<CommonSchemaProvider> for CommonSchemaProvider {
 
                 eb.add_str8(
                     "eventTime",
-                    chrono::DateTime::to_rfc3339(&chrono::DateTime::<chrono::Utc>::from(
-                        timestamp,
-                    )),
+                    chrono::DateTime::to_rfc3339(&chrono::DateTime::<chrono::Utc>::from(timestamp)),
                     OutType::Utf8,
                     0,
                 );

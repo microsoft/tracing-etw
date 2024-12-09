@@ -16,5 +16,5 @@ pub struct EventMetadata {
 #[derive(Clone)]
 pub(crate) struct ParsedEventMetadata {
     pub(crate) identity_hash: u64,
-    pub(crate) meta: &'static EventMetadata
+    pub(crate) meta: &'static EventMetadata,
 }

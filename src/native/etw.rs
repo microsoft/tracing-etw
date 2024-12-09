@@ -1,5 +1,5 @@
-use crate::{error::EtwError, values::*};
 use crate::statics::GLOBAL_ACTIVITY_SEED;
+use crate::{error::EtwError, values::*};
 use chrono::{Datelike, Timelike};
 use std::{cell::RefCell, ops::DerefMut, pin::Pin, sync::Arc, time::SystemTime};
 use tracelogging::*;
@@ -103,8 +103,7 @@ impl crate::native::ProviderTypes for Provider {
     fn is_valid(value: &Self::ProviderGroupType) -> Result<(), EtwError> {
         if value == &crate::native::native_guid::zero() {
             Err(EtwError::EmptyProviderGroupGuid)
-        }
-        else {
+        } else {
             Ok(())
         }
     }
@@ -123,7 +122,9 @@ impl Provider {
             tracing_core::Level::WARN => tracelogging::Level::Warning,
             tracing_core::Level::INFO => tracelogging::Level::Informational,
             tracing_core::Level::DEBUG => tracelogging::Level::Verbose,
-            tracing_core::Level::TRACE => tracelogging::Level::from_int(tracelogging::Level::Verbose.as_int() + 1),
+            tracing_core::Level::TRACE => {
+                tracelogging::Level::from_int(tracelogging::Level::Verbose.as_int() + 1)
+            }
         }
     }
 }
@@ -161,8 +162,7 @@ impl super::EventWriter<Provider> for Provider {
 
     #[inline]
     fn enabled(&self, level: &tracing_core::Level, keyword: u64) -> bool {
-        self.provider
-            .enabled(Self::map_level(level), keyword)
+        self.provider.enabled(Self::map_level(level), keyword)
     }
 
     fn span_start<'a, 'b, R>(

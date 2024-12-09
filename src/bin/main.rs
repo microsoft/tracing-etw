@@ -15,10 +15,15 @@ fn main() {
     #[cfg(not(feature = "global_filter"))]
     let registry = registry.with(LayerBuilder::new("test").build().unwrap());
     #[cfg(all(not(feature = "global_filter"), feature = "common_schema"))]
-    let registry = registry.with(LayerBuilder::new_common_schema_events("test2").build_with_target("geneva").unwrap());
+    let registry = registry.with(
+        LayerBuilder::new_common_schema_events("test2")
+            .build_with_target("geneva")
+            .unwrap(),
+    );
     #[cfg(not(feature = "global_filter"))]
-    let registry = registry.with(tracing_subscriber::fmt::layer().with_span_events(FmtSpan::ACTIVE));
-    
+    let registry =
+        registry.with(tracing_subscriber::fmt::layer().with_span_events(FmtSpan::ACTIVE));
+
     #[cfg(feature = "global_filter")]
     let registry = registry.with(LayerBuilder::new("test").build_global_filter().unwrap());
 

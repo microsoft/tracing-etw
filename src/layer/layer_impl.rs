@@ -65,7 +65,8 @@ where
         metadata: &tracing::Metadata<'_>,
         _ctx: tracing_subscriber::layer::Context<'_, S>,
     ) -> bool {
-        self.layer.is_enabled(&metadata.callsite(), metadata.level())
+        self.layer
+            .is_enabled(&metadata.callsite(), metadata.level())
     }
 
     #[cfg(any(feature = "global_filter", docsrs))]
@@ -74,7 +75,8 @@ where
         event: &tracing::Event<'_>,
         _ctx: tracing_subscriber::layer::Context<'_, S>,
     ) -> bool {
-        self.layer.is_enabled(&event.metadata().callsite(), event.metadata().level())
+        self.layer
+            .is_enabled(&event.metadata().callsite(), event.metadata().level())
     }
 
     fn on_event(&self, event: &tracing::Event<'_>, ctx: tracing_subscriber::layer::Context<'_, S>) {

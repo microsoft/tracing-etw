@@ -268,19 +268,27 @@ mod test {
     #[test]
     fn build_normal() {
         tracing_subscriber::registry()
-        .with(LayerBuilder::new("test_build_normal").build().unwrap());
+            .with(LayerBuilder::new("test_build_normal").build().unwrap());
     }
 
     #[test]
     fn build_with_target() {
-        tracing_subscriber::registry()
-        .with(LayerBuilder::new("test_build_with_target").with_default_keyword(5).build_with_target("asdf").unwrap());
+        tracing_subscriber::registry().with(
+            LayerBuilder::new("test_build_with_target")
+                .with_default_keyword(5)
+                .build_with_target("asdf")
+                .unwrap(),
+        );
     }
 
     #[test]
     fn build_provider_id() {
         let provider_id = GuidWrapper::from_name("name");
-        tracing_subscriber::registry()
-        .with(LayerBuilder::new("test_build_provider_id").with_provider_id(&provider_id).build().unwrap());
+        tracing_subscriber::registry().with(
+            LayerBuilder::new("test_build_provider_id")
+                .with_provider_id(&provider_id)
+                .build()
+                .unwrap(),
+        );
     }
 }

@@ -20,7 +20,9 @@ pub(crate) struct CommonSchemaPartCBuilder<'a> {
 }
 
 impl<'a> CommonSchemaPartCBuilder<'a> {
-    fn make_visitor(eb: &'a mut EventBuilder) -> EventBuilderVisitorWrapper<CommonSchemaPartCBuilder<'a>> {
+    fn make_visitor(
+        eb: &'a mut EventBuilder,
+    ) -> EventBuilderVisitorWrapper<CommonSchemaPartCBuilder<'a>> {
         EventBuilderVisitorWrapper::from(CommonSchemaPartCBuilder { eb })
     }
 }

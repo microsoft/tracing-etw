@@ -8,7 +8,7 @@ use tracing_subscriber::{registry::LookupSpan, Layer};
 use crate::{
     native::{EventWriter, ProviderTypes},
     statics::*,
-    values::*,
+    values::{span_values::*, *},
 };
 
 use super::*;
@@ -180,7 +180,7 @@ where
             0
         };
 
-        attrs.values().record(&mut ValueVisitor {
+        attrs.values().record(&mut SpanValueVisitor {
             fields: &mut data.fields,
         });
 
@@ -296,7 +296,7 @@ where
             return;
         };
 
-        values.record(&mut ValueVisitor {
+        values.record(&mut SpanValueVisitor {
             fields: &mut data.fields,
         });
     }

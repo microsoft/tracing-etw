@@ -1,5 +1,8 @@
 use crate::statics::GLOBAL_ACTIVITY_SEED;
-use crate::{error::EtwError, values::*};
+use crate::{
+    error::EtwError,
+    values::{event_values::*, *},
+};
 use chrono::{Datelike, Timelike};
 use std::{cell::RefCell, ops::DerefMut, pin::Pin, sync::Arc, time::SystemTime};
 use tracelogging::*;
@@ -40,7 +43,7 @@ impl From<std::time::SystemTime> for Win32SystemTime {
     }
 }
 
-impl<T> AddFieldAndValue<T> for &'_ mut tracelogging_dynamic::EventBuilder {
+impl AddFieldAndValue for &'_ mut tracelogging_dynamic::EventBuilder {
     fn add_field_value(&mut self, fv: &FieldAndValue) {
         match fv.value {
             ValueTypes::None => (),
@@ -171,7 +174,7 @@ impl super::EventWriter<Provider> for Provider {
         timestamp: SystemTime,
         activity_id: &[u8; 16],
         related_activity_id: &[u8; 16],
-        fields: &'b [crate::values::FieldValueIndex],
+        fields: &'b [crate::values::span_values::FieldValueIndex],
         level: &tracing_core::Level,
         keyword: u64,
         event_tag: u32,
@@ -194,7 +197,7 @@ impl super::EventWriter<Provider> for Provider {
             );
 
             for f in fields {
-                <&mut EventBuilder as AddFieldAndValue<EventBuilder>>::add_field_value(
+                <&mut EventBuilder as AddFieldAndValue>::add_field_value(
                     &mut eb.deref_mut(),
                     &FieldAndValue {
                         field_name: f.field,
@@ -227,7 +230,7 @@ impl super::EventWriter<Provider> for Provider {
         start_stop_times: (std::time::SystemTime, std::time::SystemTime),
         activity_id: &[u8; 16],
         related_activity_id: &[u8; 16],
-        fields: &'b [crate::values::FieldValueIndex],
+        fields: &'b [crate::values::span_values::FieldValueIndex],
         level: &tracing_core::Level,
         keyword: u64,
         event_tag: u32,
@@ -250,7 +253,7 @@ impl super::EventWriter<Provider> for Provider {
             );
 
             for f in fields {
-                <&mut EventBuilder as AddFieldAndValue<EventBuilder>>::add_field_value(
+                <&mut EventBuilder as AddFieldAndValue>::add_field_value(
                     &mut eb.deref_mut(),
                     &FieldAndValue {
                         field_name: f.field,
@@ -319,7 +322,7 @@ impl super::EventWriter<Provider> for Provider {
                 0,
             );
 
-            event.record(&mut VisitorWrapper::from(eb.deref_mut()));
+            event.record(&mut EventBuilderVisitorWrapper::from(eb.deref_mut()));
 
             let act = tracelogging_dynamic::Guid::from_bytes_le(&activity_id);
             let related = tracelogging_dynamic::Guid::from_bytes_le(&related_activity_id);

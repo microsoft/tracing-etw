@@ -19,6 +19,7 @@ pub(crate) static GLOBAL_ACTIVITY_SEED: LazyLock<[u8; 16]> = LazyLock::new(|| {
     data
 });
 
+#[cfg(any(target_os = "windows", target_os = "linux"))]
 fn process_static_metadata() -> Box<[ParsedEventMetadata]> {
     // The array of pointers are in a mutable section and can be sorted/deduped, but they are pointing to read-only static data
 

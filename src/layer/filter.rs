@@ -2,17 +2,15 @@ use tracing::Subscriber;
 use tracing_subscriber::{layer::Filter, registry::LookupSpan};
 
 use crate::{
-    native::{EventWriter, ProviderTypes},
+    native::{OutputMode, ProviderTraits},
     statics::get_event_metadata,
 };
 
-use super::*;
+use super::EtwFilter;
 
-impl<S, Mode> Filter<S> for EtwFilter<S, Mode>
+impl<S, OutMode: OutputMode> Filter<S> for EtwFilter<S, OutMode>
 where
     S: Subscriber + for<'a> LookupSpan<'a>,
-    Mode: ProviderTypes + 'static,
-    Mode::Provider: EventWriter<Mode> + 'static,
 {
     fn callsite_enabled(
         &self,
@@ -25,7 +23,7 @@ where
             self.layer.default_keyword
         };
 
-        if Mode::supports_enable_callback() {
+        if crate::native::Provider::<OutMode>::supports_enable_callback() {
             if self.layer.provider.enabled(metadata.level(), keyword) {
                 tracing::subscriber::Interest::always()
             } else {

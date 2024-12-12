@@ -11,11 +11,13 @@ use tracing_subscriber::registry::LookupSpan;
 #[allow(unused_imports)]
 use tracing_subscriber::{layer::Filter, Layer};
 
+use crate::error::EtwError;
 #[cfg(any(not(feature = "global_filter"), docsrs))]
 use crate::layer::EtwFilter;
 use crate::layer::{EtwLayer, _EtwLayer};
-use crate::native::{EventWriter, GuidWrapper, ProviderTypes};
-use crate::{error::EtwError, native};
+use crate::native::{
+    CommonSchemaOutput, EventWriter, GuidWrapper, NormalOutput, OutputMode, ProviderTraits,
+};
 
 /// Builds a [tracing_subscriber::Layer] that will logs events from a single
 /// ETW or user_events provider. Use [LayerBuilder::new] to construct a new
@@ -32,31 +34,28 @@ use crate::{error::EtwError, native};
 /// with different provider names/IDs, keywords, or output formats.
 /// (Target filters)[tracing_subscriber::filter] can then be used to direct
 /// specific events to specific layers.
-pub struct LayerBuilder<Mode>
-where
-    Mode: ProviderTypes,
-{
+pub struct LayerBuilder<OutMode: OutputMode> {
     provider_name: Box<str>,
     provider_id: GuidWrapper,
-    provider_group: Option<Mode::ProviderGroupType>,
+    provider_group: Option<crate::native::ProviderGroupType>,
     default_keyword: u64,
-    _m: PhantomData<Mode>,
+    _o: PhantomData<OutMode>,
 }
 
-impl LayerBuilder<native::Provider> {
+impl LayerBuilder<NormalOutput> {
     #[allow(clippy::new_ret_no_self)]
-    pub fn new(name: &str) -> LayerBuilder<native::Provider> {
-        LayerBuilder::<native::Provider> {
+    pub fn new(name: &str) -> LayerBuilder<NormalOutput> {
+        LayerBuilder::<NormalOutput> {
             provider_name: name.to_string().into_boxed_str(),
             provider_id: GuidWrapper::from_name(name),
             provider_group: None,
             default_keyword: 1,
-            _m: PhantomData,
+            _o: PhantomData,
         }
     }
 }
 
-impl LayerBuilder<native::common_schema::Provider> {
+impl LayerBuilder<CommonSchemaOutput> {
     /// For advanced scenarios.
     /// Emit events that follow the Common Schema 4.0 mapping.
     /// Recommended only for compatibility with specialized event consumers.
@@ -64,21 +63,18 @@ impl LayerBuilder<native::common_schema::Provider> {
     /// may perform worse. Common Schema events are much slower to generate
     /// and should not be enabled unless absolutely necessary.
     #[cfg(any(feature = "common_schema", docsrs))]
-    pub fn new_common_schema_events(name: &str) -> LayerBuilder<native::common_schema::Provider> {
-        LayerBuilder::<native::common_schema::Provider> {
+    pub fn new_common_schema_events(name: &str) -> LayerBuilder<CommonSchemaOutput> {
+        LayerBuilder::<CommonSchemaOutput> {
             provider_name: name.to_string().into_boxed_str(),
             provider_id: GuidWrapper::from_name(name),
             provider_group: None,
             default_keyword: 1,
-            _m: PhantomData,
+            _o: PhantomData,
         }
     }
 }
 
-impl<Mode> LayerBuilder<Mode>
-where
-    Mode: ProviderTypes + 'static,
-{
+impl<OutMode: OutputMode + 'static> LayerBuilder<OutMode> {
     /// For advanced scenarios.
     /// Assign a provider ID to the ETW provider rather than use
     /// one generated from the provider name.
@@ -116,17 +112,20 @@ where
     /// Set the provider group to join this provider to.
     pub fn with_provider_group<G>(mut self, group_id: &G) -> Self
     where
-        for<'a> &'a G: Into<Mode::ProviderGroupType>,
+        for<'a> &'a G: Into<crate::native::ProviderGroupType>,
     {
         self.provider_group = Some(group_id.into());
         self
     }
 
     fn validate_config(&self) -> Result<(), EtwError> {
-        Mode::is_valid_provider(&self.provider_name).and_then(|_| {
-            self.provider_group.as_ref().map_or_else(|| Ok(()), |group| {
-                Mode::is_valid_group(&self.provider_name, group)
-            })
+        crate::native::Provider::<OutMode>::is_valid_provider(&self.provider_name).and_then(|_| {
+            self.provider_group.as_ref().map_or_else(
+                || Ok(()),
+                |group| {
+                    crate::native::Provider::<OutMode>::is_valid_group(&self.provider_name, group)
+                },
+            )
         })
     }
 
@@ -141,14 +140,14 @@ where
         targets
     }
 
-    fn build_layer<S>(&self) -> EtwLayer<S, Mode>
+    fn build_layer<S>(&self) -> EtwLayer<S, OutMode>
     where
         S: Subscriber + for<'a> LookupSpan<'a>,
-        Mode::Provider: EventWriter<Mode> + 'static,
+        crate::native::Provider<OutMode>: EventWriter<OutMode>,
     {
-        EtwLayer::<S, Mode> {
+        EtwLayer::<S, OutMode> {
             layer: _EtwLayer {
-                provider: Mode::Provider::new(
+                provider: crate::native::Provider::<OutMode>::new(
                     &self.provider_name,
                     &self.provider_id,
                     &self.provider_group,
@@ -161,12 +160,11 @@ where
     }
 
     #[cfg(any(not(feature = "global_filter"), docsrs))]
-    fn build_filter<S>(&self, layer: _EtwLayer<S, Mode>) -> EtwFilter<S, Mode>
+    fn build_filter<S>(&self, layer: _EtwLayer<S, OutMode>) -> EtwFilter<S, OutMode>
     where
         S: Subscriber + for<'a> LookupSpan<'a>,
-        Mode::Provider: EventWriter<Mode> + 'static,
     {
-        EtwFilter::<S, Mode> { layer }
+        EtwFilter::<S, OutMode> { layer }
     }
 
     #[cfg_attr(docsrs, doc(cfg(feature = "global_filter")))]
@@ -184,10 +182,12 @@ where
     #[allow(clippy::type_complexity)]
     #[cfg_attr(docsrs, doc(cfg(not(feature = "global_filter"))))]
     #[cfg(any(not(feature = "global_filter"), docsrs))]
-    pub fn build<S>(self) -> Result<Filtered<EtwLayer<S, Mode>, EtwFilter<S, Mode>, S>, EtwError>
+    pub fn build<S>(
+        self,
+    ) -> Result<Filtered<EtwLayer<S, OutMode>, EtwFilter<S, OutMode>, S>, EtwError>
     where
         S: Subscriber + for<'a> LookupSpan<'a>,
-        Mode::Provider: EventWriter<Mode> + 'static,
+        crate::native::Provider<OutMode>: EventWriter<OutMode>,
     {
         self.validate_config()?;
 
@@ -207,10 +207,10 @@ where
     pub fn build_with_target<S>(
         self,
         target: &'static str,
-    ) -> Result<Filtered<EtwLayer<S, Mode>, And<EtwFilter<S, Mode>, Targets, S>, S>, EtwError>
+    ) -> Result<Filtered<EtwLayer<S, OutMode>, And<EtwFilter<S, OutMode>, Targets, S>, S>, EtwError>
     where
         S: Subscriber + for<'a> LookupSpan<'a>,
-        Mode::Provider: EventWriter<Mode> + 'static,
+        crate::native::Provider<OutMode>: EventWriter<OutMode>,
     {
         self.validate_config()?;
 

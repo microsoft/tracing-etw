@@ -6,7 +6,7 @@ use tracing_core::{callsite, span};
 use tracing_subscriber::{registry::LookupSpan, Layer};
 
 use crate::{
-    native::{EventWriter, ProviderTypes},
+    native::EventWriter,
     statics::*,
     values::{span_values::*, *},
 };
@@ -20,11 +20,10 @@ struct SpanData {
     start_time: SystemTime,
 }
 
-impl<S, Mode> Layer<S> for EtwLayer<S, Mode>
+impl<S, OutMode: OutputMode + 'static> Layer<S> for EtwLayer<S, OutMode>
 where
     S: Subscriber + for<'a> LookupSpan<'a>,
-    Mode: ProviderTypes + 'static,
-    Mode::Provider: EventWriter<Mode> + 'static,
+    crate::native::Provider<OutMode>: EventWriter<OutMode>,
 {
     fn on_register_dispatch(&self, _collector: &tracing::Dispatch) {
         // Late init when the layer is installed as a subscriber
@@ -46,7 +45,7 @@ where
             self.layer.default_keyword
         };
 
-        if Mode::supports_enable_callback() {
+        if crate::native::Provider::<OutMode>::supports_enable_callback() {
             if self.layer.provider.enabled(metadata.level(), keyword) {
                 tracing::subscriber::Interest::always()
             } else {

@@ -5,6 +5,8 @@ pub mod etw;
 #[doc(hidden)]
 pub use etw::Provider;
 #[cfg(target_os = "windows")]
+pub(crate) use etw::ProviderGroupType;
+#[cfg(target_os = "windows")]
 pub(crate) use etw::_start__etw_kw;
 #[cfg(target_os = "windows")]
 pub(crate) use etw::_stop__etw_kw;
@@ -15,6 +17,8 @@ pub mod noop;
 #[cfg(not(any(target_os = "windows", target_os = "linux")))]
 #[doc(hidden)]
 pub use noop::Provider;
+#[cfg(not(any(target_os = "windows", target_os = "linux")))]
+pub(crate) use noop::ProviderGroupType;
 
 #[cfg(target_os = "linux")]
 #[doc(hidden)]
@@ -23,12 +27,11 @@ pub mod user_events;
 #[doc(hidden)]
 pub use user_events::Provider;
 #[cfg(target_os = "linux")]
+pub(crate) use user_events::ProviderGroupType;
+#[cfg(target_os = "linux")]
 pub(crate) use user_events::_start__etw_kw;
 #[cfg(target_os = "linux")]
 pub(crate) use user_events::_stop__etw_kw;
-
-#[cfg(feature = "common_schema")]
-pub(crate) mod common_schema;
 
 #[cfg(target_os = "linux")]
 pub(crate) use eventheader::Guid as native_guid;
@@ -88,29 +91,45 @@ impl GuidWrapper {
 }
 
 #[doc(hidden)]
-pub trait ProviderTypes {
-    type Provider;
-    type ProviderGroupType;
+mod private {
+    #[doc(hidden)]
+    pub trait Sealed {}
+}
 
+#[doc(hidden)]
+pub trait OutputMode: private::Sealed {}
+
+#[doc(hidden)]
+pub struct NormalOutput;
+impl private::Sealed for NormalOutput {}
+impl OutputMode for NormalOutput {}
+
+#[doc(hidden)]
+pub struct CommonSchemaOutput;
+impl private::Sealed for CommonSchemaOutput {}
+impl OutputMode for CommonSchemaOutput {}
+
+#[doc(hidden)]
+pub trait ProviderTraits {
     fn supports_enable_callback() -> bool;
 
     fn is_valid_provider(provider_name: &str) -> Result<(), EtwError>;
 
-    fn is_valid_group(provider_name: &str, value: &Self::ProviderGroupType) -> Result<(), EtwError>;
+    fn is_valid_group(provider_name: &str, value: &ProviderGroupType) -> Result<(), EtwError>;
+
+    fn enabled(&self, level: &tracing_core::Level, keyword: u64) -> bool;
 }
 
 #[doc(hidden)]
-pub trait EventWriter<Mode: ProviderTypes> {
+pub trait EventWriter<OutMode: OutputMode> {
     fn new<G>(
         provider_name: &str,
         provider_id: &G,
-        provider_group: &Option<Mode::ProviderGroupType>,
+        provider_group: &Option<ProviderGroupType>,
         _default_keyword: u64,
     ) -> std::pin::Pin<std::sync::Arc<Self>>
     where
         for<'a> &'a G: Into<GuidWrapper>;
-
-    fn enabled(&self, level: &tracing_core::Level, keyword: u64) -> bool;
 
     #[allow(clippy::too_many_arguments)]
     fn span_start<'a, 'b, R>(

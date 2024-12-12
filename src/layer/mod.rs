@@ -10,23 +10,17 @@ use tracing_core::callsite;
 use tracing_subscriber::registry::LookupSpan;
 
 use crate::{
-    native::{EventWriter, ProviderTypes},
+    native::{OutputMode, ProviderTraits},
     statics::get_event_metadata,
 };
 
-pub(crate) struct _EtwLayer<S, Mode: ProviderTypes>
-where
-    Mode::Provider: crate::native::EventWriter<Mode> + 'static,
-{
-    pub(crate) provider: Pin<Arc<Mode::Provider>>,
+pub(crate) struct _EtwLayer<S, OutMode: OutputMode> {
+    pub(crate) provider: Pin<Arc<crate::native::Provider<OutMode>>>,
     pub(crate) default_keyword: u64,
     pub(crate) _p: PhantomData<S>,
 }
 
-impl<S, Mode: ProviderTypes> Clone for _EtwLayer<S, Mode>
-where
-    Mode::Provider: crate::native::EventWriter<Mode> + 'static,
-{
+impl<S, OutMode: OutputMode> Clone for _EtwLayer<S, OutMode> {
     fn clone(&self) -> Self {
         _EtwLayer {
             provider: self.provider.clone(),
@@ -38,28 +32,20 @@ where
 
 // This struct needs to be public as it implements the tracing_subscriber::Layer and tracing_subscriber::Layer::Filter traits.
 #[doc(hidden)]
-pub struct EtwLayer<S, Mode: ProviderTypes>
-where
-    Mode::Provider: EventWriter<Mode> + 'static,
-{
-    pub(crate) layer: _EtwLayer<S, Mode>,
+pub struct EtwLayer<S, OutMode: OutputMode> {
+    pub(crate) layer: _EtwLayer<S, OutMode>,
 }
 
 // This struct needs to be public as it implements the tracing_subscriber::Layer::Filter trait.
 #[doc(hidden)]
 #[cfg(any(not(feature = "global_filter"), docsrs))]
-pub struct EtwFilter<S, Mode: ProviderTypes>
-where
-    Mode::Provider: EventWriter<Mode> + 'static,
-{
-    pub(crate) layer: _EtwLayer<S, Mode>,
+pub struct EtwFilter<S, OutMode: OutputMode> {
+    pub(crate) layer: _EtwLayer<S, OutMode>,
 }
 
-impl<S, Mode> _EtwLayer<S, Mode>
+impl<S, OutMode: OutputMode> _EtwLayer<S, OutMode>
 where
     S: Subscriber + for<'a> LookupSpan<'a>,
-    Mode: ProviderTypes + 'static,
-    Mode::Provider: EventWriter<Mode> + 'static,
 {
     fn is_enabled(&self, callsite: &callsite::Identifier, level: &tracing_core::Level) -> bool {
         let etw_meta = get_event_metadata(callsite);

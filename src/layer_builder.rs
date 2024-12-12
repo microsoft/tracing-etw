@@ -36,7 +36,7 @@ pub struct LayerBuilder<Mode>
 where
     Mode: ProviderTypes,
 {
-    provider_name: String,
+    provider_name: Box<str>,
     provider_id: GuidWrapper,
     provider_group: Option<Mode::ProviderGroupType>,
     default_keyword: u64,
@@ -47,7 +47,7 @@ impl LayerBuilder<native::Provider> {
     #[allow(clippy::new_ret_no_self)]
     pub fn new(name: &str) -> LayerBuilder<native::Provider> {
         LayerBuilder::<native::Provider> {
-            provider_name: name.to_owned(),
+            provider_name: name.to_string().into_boxed_str(),
             provider_id: GuidWrapper::from_name(name),
             provider_group: None,
             default_keyword: 1,
@@ -66,7 +66,7 @@ impl LayerBuilder<native::common_schema::Provider> {
     #[cfg(any(feature = "common_schema", docsrs))]
     pub fn new_common_schema_events(name: &str) -> LayerBuilder<native::common_schema::Provider> {
         LayerBuilder::<native::common_schema::Provider> {
-            provider_name: name.to_owned(),
+            provider_name: name.to_string().into_boxed_str(),
             provider_id: GuidWrapper::from_name(name),
             provider_group: None,
             default_keyword: 1,
@@ -123,49 +123,16 @@ where
     }
 
     fn validate_config(&self) -> Result<(), EtwError> {
-        #[cfg(target_os = "linux")]
-        {
-            if self
-                .provider_name
-                .contains(|f: char| !f.is_ascii_alphanumeric() && f != '_')
-            {
-                // The perf command is very particular about the provider names it accepts.
-                // The Linux kernel itself cares less, and other event consumers should also presumably not need this check.
-                return Err(EtwError::InvalidProviderNameCharacters(
-                    self.provider_name.clone(),
-                ));
-            }
-
-            let group_name_len = match &self.provider_group {
-                None => 0,
-                Some(ref name) => Mode::get_provider_group(&name).as_ref().len(),
-            };
-
-            if self.provider_name.len() + group_name_len >= 234 {
-                return Err(EtwError::TooManyCharacters(
-                    self.provider_name.len() + group_name_len,
-                ));
-            }
-        }
-
-        match &self.provider_group {
-            None => Ok(()),
-            Some(value) => Mode::is_valid(value),
-        }
+        Mode::is_valid_provider(&self.provider_name).and_then(|_| {
+            self.provider_group.as_ref().map_or_else(|| Ok(()), |group| {
+                Mode::is_valid_group(&self.provider_name, group)
+            })
+        })
     }
 
     #[cfg(any(not(feature = "global_filter"), docsrs))]
     fn build_target_filter(&self, target: &'static str) -> Targets {
-        let mut targets = Targets::new().with_target(&self.provider_name, LevelFilter::TRACE);
-
-        #[cfg(target_os = "linux")]
-        match self.provider_group {
-            None => {}
-            Some(ref name) => {
-                targets = targets
-                    .with_target(Mode::get_provider_group(name).as_ref(), LevelFilter::TRACE);
-            }
-        }
+        let mut targets = Targets::new().with_target(&*self.provider_name, LevelFilter::TRACE);
 
         if !target.is_empty() {
             targets = targets.with_target(target, LevelFilter::TRACE)

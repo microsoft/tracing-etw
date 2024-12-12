@@ -16,7 +16,11 @@ impl crate::native::ProviderTypes for Provider {
         false
     }
 
-    fn is_valid(_value: &Self::ProviderGroupType) -> Result<(), EtwError> {
+    fn is_valid_provider(_provider_name: &str) -> Result<(), EtwError> {
+        Ok(())
+    }
+
+    fn is_valid_group(_provider_name: &str, _value: &Self::ProviderGroupType) -> Result<(), EtwError> {
         Ok(())
     }
 }

@@ -103,7 +103,11 @@ impl crate::native::ProviderTypes for Provider {
         true
     }
 
-    fn is_valid(value: &Self::ProviderGroupType) -> Result<(), EtwError> {
+    fn is_valid_provider(_provider_name: &str) -> Result<(), EtwError> {
+        Ok(())
+    }
+
+    fn is_valid_group(_provider_name: &str, value: &Self::ProviderGroupType) -> Result<(), EtwError> {
         if value == &crate::native::native_guid::zero() {
             Err(EtwError::EmptyProviderGroupGuid)
         } else {

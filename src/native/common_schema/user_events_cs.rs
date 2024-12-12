@@ -60,18 +60,34 @@ impl crate::native::ProviderTypes for CommonSchemaProvider {
         false
     }
 
-    fn is_valid(value: &Self::ProviderGroupType) -> Result<(), EtwError> {
-        if !eventheader_dynamic::ProviderOptions::is_valid_option_value(value) {
-            Err(EtwError::InvalidProviderGroupCharacters(
-                value.clone().into(),
+    fn is_valid_provider(provider_name: &str) -> Result<(), EtwError> {
+        if provider_name.contains(|f: char| !f.is_ascii_alphanumeric() && f != '_')
+        {
+            // The perf command is very particular about the provider names it accepts.
+            // The Linux kernel itself cares less, and other event consumers should also presumably not need this check.
+            Err(EtwError::InvalidProviderNameCharacters(
+                provider_name.to_string(),
             ))
-        } else {
+        }
+        else {
             Ok(())
         }
     }
 
-    fn get_provider_group(value: &Self::ProviderGroupType) -> impl AsRef<str> {
-        value.clone()
+    fn is_valid_group(provider_name: &str, value: &Self::ProviderGroupType) -> Result<(), EtwError> {
+        if !eventheader_dynamic::ProviderOptions::is_valid_option_value(value) {
+            Err(EtwError::InvalidProviderGroupCharacters(
+                value.clone().into(),
+            ))
+        }
+        else if provider_name.len() + value.len() >= 234 {
+            Err(EtwError::TooManyCharacters(
+                provider_name.len() + value.len(),
+            ))
+        }
+        else {
+            Ok(())
+        }
     }
 }
 

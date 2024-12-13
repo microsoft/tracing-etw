@@ -62,7 +62,6 @@ impl LayerBuilder<CommonSchemaOutput> {
     /// Most ETW consumers will not benefit from events in this schema, and
     /// may perform worse. Common Schema events are much slower to generate
     /// and should not be enabled unless absolutely necessary.
-    #[cfg(any(feature = "common_schema", docsrs))]
     pub fn new_common_schema_events(name: &str) -> LayerBuilder<CommonSchemaOutput> {
         LayerBuilder::<CommonSchemaOutput> {
             provider_name: name.to_string().into_boxed_str(),

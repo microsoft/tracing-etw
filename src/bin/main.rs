@@ -14,7 +14,7 @@ fn main() {
 
     #[cfg(not(feature = "global_filter"))]
     let registry = registry.with(LayerBuilder::new("test").build().unwrap());
-    #[cfg(all(not(feature = "global_filter"), feature = "common_schema"))]
+    #[cfg(not(feature = "global_filter"))]
     let registry = registry.with(
         LayerBuilder::new_common_schema_events("test2")
             .build_with_target("geneva")

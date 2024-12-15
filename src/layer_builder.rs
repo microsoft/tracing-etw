@@ -43,6 +43,20 @@ pub struct LayerBuilder<OutMode: OutputMode> {
 }
 
 impl LayerBuilder<NormalOutput> {
+    /// Creates a new ETW/user_events layer that will log events from a provider
+    /// with the given name.
+    /// 
+    /// ```
+    /// # use tracing_subscriber::prelude::*;
+    /// # let reg = tracing_subscriber::registry();
+    /// # let layer = 
+    /// tracing_etw::LayerBuilder::new("SampleProviderName")
+    /// # ;
+    /// # let built = layer.build();
+    /// # assert!(built.is_ok());
+    /// # reg.with(built.unwrap());
+    /// ```
+    ///
     #[allow(clippy::new_ret_no_self)]
     pub fn new(name: &str) -> LayerBuilder<NormalOutput> {
         LayerBuilder::<NormalOutput> {
@@ -62,6 +76,18 @@ impl LayerBuilder<CommonSchemaOutput> {
     /// Most ETW consumers will not benefit from events in this schema, and
     /// may perform worse. Common Schema events are much slower to generate
     /// and should not be enabled unless absolutely necessary.
+    ///
+    /// ```
+    /// # use tracing_subscriber::prelude::*;
+    /// # let reg = tracing_subscriber::registry();
+    /// # let layer = 
+    /// tracing_etw::LayerBuilder::new_common_schema_events("SampleProviderName")
+    /// # ;
+    /// # let built = layer.build();
+    /// # assert!(built.is_ok());
+    /// # reg.with(built.unwrap());
+    /// ```
+    ///
     pub fn new_common_schema_events(name: &str) -> LayerBuilder<CommonSchemaOutput> {
         LayerBuilder::<CommonSchemaOutput> {
             provider_name: name.to_string().into_boxed_str(),
@@ -77,6 +103,19 @@ impl<OutMode: OutputMode + 'static> LayerBuilder<OutMode> {
     /// For advanced scenarios.
     /// Assign a provider ID to the ETW provider rather than use
     /// one generated from the provider name.
+    ///
+    /// ```
+    /// # use tracing_subscriber::prelude::*;
+    /// # let reg = tracing_subscriber::registry();
+    /// # let layer = 
+    /// tracing_etw::LayerBuilder::new("SampleProviderName")
+    ///     .with_provider_id(&tracing_etw::native::GuidWrapper::from_name("SampleProviderName"))
+    /// # ;
+    /// # let built = layer.build();
+    /// # assert!(built.is_ok());
+    /// # reg.with(built.unwrap());
+    /// ```
+    ///
     pub fn with_provider_id<G>(mut self, guid: &G) -> Self
     where
         for<'a> &'a G: Into<GuidWrapper>,
@@ -88,6 +127,20 @@ impl<OutMode: OutputMode + 'static> LayerBuilder<OutMode> {
     /// Get the current provider ID that will be used for the ETW provider.
     /// This is a convenience function to help with tools that do not implement
     /// the standard provider name to ID algorithm.
+    ///
+    /// ```
+    /// # use tracing_subscriber::prelude::*;
+    /// # let reg = tracing_subscriber::registry();
+    /// # let layer =
+    /// tracing_etw::LayerBuilder::new("SampleProviderName")
+    /// # ;
+    /// assert!(
+    ///     layer.get_provider_id() == tracing_etw::native::GuidWrapper::from_name("SampleProviderName"),
+    ///     "default provider GUID is hashed from the provider name");
+    /// # let built = layer.build();
+    /// # assert!(built.is_ok());
+    /// # reg.with(built.unwrap());
+    /// ```
     pub fn get_provider_id(&self) -> GuidWrapper {
         self.provider_id
     }
@@ -102,6 +155,25 @@ impl<OutMode: OutputMode + 'static> LayerBuilder<OutMode> {
     ///
     /// Keyword value `0` is special in ETW (but not user_events), and should
     /// not be used.
+    /// 
+    /// Keywords in ETW are bitmasks, with the high 16 bits being reserved by Microsoft.
+    /// See <https://learn.microsoft.com/en-us/windows/win32/wes/defining-keywords-used-to-classify-types-of-events>
+    /// for more information about keywords in ETW.
+    /// 
+    /// Keywords in user_events are not bitmasks.
+    /// 
+    /// ```
+    /// # use tracing_subscriber::prelude::*;
+    /// # let reg = tracing_subscriber::registry();
+    /// # let layer =
+    /// tracing_etw::LayerBuilder::new("SampleProviderName")
+    ///     .with_default_keyword(0x1000)
+    /// # ;
+    /// # let built = layer.build();
+    /// # assert!(built.is_ok());
+    /// # reg.with(built.unwrap());
+    /// ```
+    ///
     pub fn with_default_keyword(mut self, kw: u64) -> Self {
         self.default_keyword = kw;
         self
@@ -109,6 +181,10 @@ impl<OutMode: OutputMode + 'static> LayerBuilder<OutMode> {
 
     /// For advanced scenarios.
     /// Set the provider group to join this provider to.
+    ///
+    /// For ETW, the group ID must be a GUID.
+    /// 
+    /// For user_events, the group ID must be a string.
     pub fn with_provider_group<G>(mut self, group_id: &G) -> Self
     where
         for<'a> &'a G: Into<crate::native::ProviderGroupType>,
@@ -168,16 +244,25 @@ impl<OutMode: OutputMode + 'static> LayerBuilder<OutMode> {
 
     #[cfg_attr(docsrs, doc(cfg(feature = "global_filter")))]
     #[cfg(any(feature = "global_filter", docsrs))]
-    pub fn build_global_filter<S>(self) -> Result<EtwLayer<S, Mode>, EtwError>
+    pub fn build_global_filter<S>(self) -> Result<EtwLayer<S, OutMode>, EtwError>
     where
         S: Subscriber + for<'a> LookupSpan<'a>,
-        Mode::Provider: EventWriter<Mode> + 'static,
+        crate::native::Provider<OutMode>: EventWriter<OutMode>,
     {
         self.validate_config()?;
 
         Ok(self.build_layer())
     }
 
+    ///
+    /// ```
+    /// # use tracing_subscriber::prelude::*;
+    /// # let reg = tracing_subscriber::registry();
+    /// let built_layer = tracing_etw::LayerBuilder::new("SampleProviderName").build();
+    /// assert!(built_layer.is_ok());
+    /// # reg.with(built_layer.unwrap());
+    /// ```
+    ///
     #[allow(clippy::type_complexity)]
     #[cfg_attr(docsrs, doc(cfg(not(feature = "global_filter"))))]
     #[cfg(any(not(feature = "global_filter"), docsrs))]
@@ -200,6 +285,24 @@ impl<OutMode: OutputMode + 'static> LayerBuilder<OutMode> {
     /// Constructs the configured layer with a target [tracing_subscriber::filter] applied.
     /// This can be used to target specific events to specific layers, and in effect allow
     /// specific events to be logged only from specific ETW/user_event providers.
+    ///
+    /// ```
+    /// # use tracing::event;
+    /// # use tracing_subscriber::prelude::*;
+    /// # let reg = tracing_subscriber::registry();
+    /// let built_layer = tracing_etw::LayerBuilder::new("SampleProviderName")
+    ///     .build_with_target("MyTargetName");
+    /// assert!(built_layer.is_ok());
+    /// # reg.with(built_layer.unwrap());
+    /// 
+    /// // ...
+    /// 
+    /// event!(target: "MyTargetName", tracing::Level::INFO, "My event");
+    /// 
+    /// // When build_with_target is used, the provider name is also always added as a target
+    /// event!(target: "SampleProviderName", tracing::Level::INFO, "My event");
+    /// ```
+    ///
     #[allow(clippy::type_complexity)]
     #[cfg_attr(docsrs, doc(cfg(not(feature = "global_filter"))))]
     #[cfg(any(not(feature = "global_filter"), docsrs))]
@@ -220,41 +323,5 @@ impl<OutMode: OutputMode + 'static> LayerBuilder<OutMode> {
         let targets = self.build_target_filter(target);
 
         Ok(layer.with_filter(filter.and(targets)))
-    }
-}
-
-#[cfg(test)]
-mod test {
-    use tracing_subscriber::{self, prelude::*};
-
-    use crate::native::GuidWrapper;
-
-    use super::LayerBuilder;
-
-    #[test]
-    fn build_normal() {
-        tracing_subscriber::registry()
-            .with(LayerBuilder::new("test_build_normal").build().unwrap());
-    }
-
-    #[test]
-    fn build_with_target() {
-        tracing_subscriber::registry().with(
-            LayerBuilder::new("test_build_with_target")
-                .with_default_keyword(5)
-                .build_with_target("asdf")
-                .unwrap(),
-        );
-    }
-
-    #[test]
-    fn build_provider_id() {
-        let provider_id = GuidWrapper::from_name("name");
-        tracing_subscriber::registry().with(
-            LayerBuilder::new("test_build_provider_id")
-                .with_provider_id(&provider_id)
-                .build()
-                .unwrap(),
-        );
     }
 }

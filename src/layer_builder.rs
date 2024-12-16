@@ -32,7 +32,7 @@ use crate::native::{
 ///
 /// Multiple `tracing_etw` layers can be created at the same time,
 /// with different provider names/IDs, keywords, or output formats.
-/// (Target filters)[tracing_subscriber::filter] can then be used to direct
+/// [Target filters][tracing_subscriber::filter] can then be used to direct
 /// specific events to specific layers.
 pub struct LayerBuilder<OutMode: OutputMode> {
     provider_name: Box<str>,

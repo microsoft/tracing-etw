@@ -41,7 +41,7 @@ pub(crate) use tracelogging_dynamic::Guid as native_guid;
 use crate::error::EtwError;
 
 #[doc(hidden)]
-#[derive(Copy, Clone)]
+#[derive(Copy, Clone, PartialEq, Eq)]
 pub struct GuidWrapper(u128);
 
 impl From<&native_guid> for GuidWrapper {

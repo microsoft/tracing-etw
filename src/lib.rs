@@ -108,29 +108,47 @@
 //! to consumers asynchronously per the platform design.
 //!
 //! ### Heap Allocations
+//! 
+//! The goal of this crate is to have no heap allocations in the hot path (when an event is logged).
+//! Currently there are a few circumstances when logging an event requires a heap
+//! allocation, outlined below.
+//! 
+//! Total memory usage by this crate will vary based on workload, but will usually
+//! stay in the 10s or low 100s of kilobytes, and should remain stable once the
+//! first event has been logged.
 //!
-//! Each `tracing-etw::Layer` that is added will heap allocate the provider name and GUID.
+//! - Each `tracing-etw::Layer` that is added will heap allocate some internal state
+//! when `build` is called.
 //!
-//! Logging events with the [std::fmt::Debug](debug format specifier (`:?`)) will
+//! - Logging events with the [Debug][std::fmt::Debug] format specifier (`:?`) will
 //! necessitate a heap allocation to format the value into a string.
+//! 
+//! <div class="warning">
+//! 
+//! All event messages (the format strings to the event) are, for reasons
+//! outside of the control of this crate, formatted as debug formats rather than as
+//! a string. This effectively means every single event is forced to perform at least
+//! one heap allocation. In benchmarking, this does not seem to be a major performance issue.
+//! 
+//! </div>
 //!
-//! Logging strings copies them to the heap first. This is a side-effect of how
+//! - Logging strings copies them to the heap first. This is a side-effect of how
 //! `tracing` presents the strings to each layer; the lifetime of the string is
 //! too short for what this crate currently needs, but it may be possible to improve
 //! this in the future.
 //!
-//! Logging a span allocates a copy of the span's fields on the heap. This is needed
+//! - Logging a span allocates a copy of the span's fields on the heap. This is needed
 //! so the values can be updated during execution and the final payload values logged
 //! when the span ends. This allocation is freed when the span ends.
 //!
-//! The first time an event is logged (the event is enabled at the platform layer and
+//! - The first time an event is logged (the event is enabled at the platform layer and
 //! the logging code is run), this crate will scan the binary for any metadata left
 //! by the `etw_event!` macro. This information will be cached in a single heap
 //! allocation for later use by other logging calls. This cached memory is never freed
 //! until the process exits; if this crate is used in a dynamic library that unloads
 //! before the process exits, the memory will be leaked.
 //!
-//! A thread-local event builder is allocated for each thread that logs an event.
+//! - A thread-local event builder is allocated for each thread that logs an event.
 //! This allows for complete thread safety when logging events. This allocation
 //! will stay alive until the thread ends. Additionally, the builder itself will allocate
 //! scratch space for constructing the event. This scratch space will grow to fit the

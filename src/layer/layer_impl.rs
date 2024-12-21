@@ -211,7 +211,7 @@ where
         let data = if let Some(data) = span_data_guard.get_mut(&span.id()) {
             data
         } else {
-            // We got a span that was entered without being new'ed?
+            debug_assert!(false, "Enter of unrecognized span");
             return;
         };
 
@@ -253,7 +253,7 @@ where
         let data = if let Some(data) = span_data_guard.get(&span.id()) {
             data
         } else {
-            // We got a span that was entered without being new'ed?
+            debug_assert!(false, "Exit of unrecognized span");
             return;
         };
 
@@ -276,8 +276,11 @@ where
         );
     }
 
-    fn on_close(&self, _id: span::Id, _ctx: tracing_subscriber::layer::Context<'_, S>) {
-        // TODO: Remove span from the SPAN_DATA global
+    fn on_close(&self, id: span::Id, _ctx: tracing_subscriber::layer::Context<'_, S>) {
+        let mut span_data_guard = SPAN_DATA.write().unwrap();
+        if let None = span_data_guard.remove(&id) {
+            debug_assert!(false, "Close of unrecognized span");
+        }
     }
 
     fn on_record(
@@ -298,7 +301,7 @@ where
         let data = if let Some(data) = span_data_guard.get_mut(&span.id()) {
             data
         } else {
-            // We got a span that was entered without being new'ed?
+            debug_assert!(false, "Event on unrecognized span");
             return;
         };
 

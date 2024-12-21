@@ -9,7 +9,7 @@ use tracing_subscriber::{self, prelude::*};
 pub fn user_events_benchmark(c: &mut Criterion) {
     let builder = LayerBuilder::new("user_events_bench");
     let _subscriber = tracing_subscriber::registry()
-        .with(builder.build().unwrap())
+        .with(builder.__build_for_test().unwrap())
         .init();
 
     // Disabled provider

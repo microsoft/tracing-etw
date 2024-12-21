@@ -31,9 +31,7 @@ impl<Mode: OutputMode> crate::native::ProviderTraits for Provider<Mode> {
     fn enabled(&self, _level: &tracing_core::Level, _keyword: u64) -> bool {
         false
     }
-}
 
-impl<OutMode: OutputMode> crate::native::EventWriter<OutMode> for Provider<OutMode> {
     fn new<G>(
         _provider_name: &str,
         _provider_id: &G,
@@ -45,7 +43,9 @@ impl<OutMode: OutputMode> crate::native::EventWriter<OutMode> for Provider<OutMo
     {
         Arc::pin(Self { _m: PhantomData })
     }
+}
 
+impl<OutMode: OutputMode> crate::native::EventWriter<OutMode> for Provider<OutMode> {
     fn span_start<'a, 'b, R>(
         self: Pin<&Self>,
         _span: &'b SpanRef<'a, R>,

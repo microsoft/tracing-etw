@@ -277,8 +277,7 @@ where
     }
 
     fn on_close(&self, _id: span::Id, _ctx: tracing_subscriber::layer::Context<'_, S>) {
-        // A span was closed
-        // Good for knowing when to log a summary event?
+        // TODO: Remove span from the SPAN_DATA global
     }
 
     fn on_record(

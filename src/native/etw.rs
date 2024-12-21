@@ -123,29 +123,7 @@ impl<Mode: OutputMode> crate::native::ProviderTraits for Provider<Mode> {
     fn enabled(&self, level: &tracing_core::Level, keyword: u64) -> bool {
         self.provider.enabled(Self::map_level(level), keyword)
     }
-}
 
-impl<Mode: OutputMode> Provider<Mode> {
-    #[inline(always)]
-    fn get_provider(self: Pin<&Self>) -> Pin<&tracelogging_dynamic::Provider> {
-        unsafe { self.map_unchecked(|s| &s.provider) }
-    }
-
-    #[inline]
-    const fn map_level(level: &tracing_core::Level) -> tracelogging::Level {
-        match *level {
-            tracing_core::Level::ERROR => tracelogging::Level::Error,
-            tracing_core::Level::WARN => tracelogging::Level::Warning,
-            tracing_core::Level::INFO => tracelogging::Level::Informational,
-            tracing_core::Level::DEBUG => tracelogging::Level::Verbose,
-            tracing_core::Level::TRACE => {
-                tracelogging::Level::from_int(tracelogging::Level::Verbose.as_int() + 1)
-            }
-        }
-    }
-}
-
-impl<Mode: OutputMode> super::EventWriter<NormalOutput> for Provider<Mode> {
     fn new<G>(
         provider_name: &str,
         provider_id: &G,
@@ -176,7 +154,29 @@ impl<Mode: OutputMode> super::EventWriter<NormalOutput> for Provider<Mode> {
 
         wrapper
     }
+}
 
+impl<Mode: OutputMode> Provider<Mode> {
+    #[inline(always)]
+    fn get_provider(self: Pin<&Self>) -> Pin<&tracelogging_dynamic::Provider> {
+        unsafe { self.map_unchecked(|s| &s.provider) }
+    }
+
+    #[inline]
+    const fn map_level(level: &tracing_core::Level) -> tracelogging::Level {
+        match *level {
+            tracing_core::Level::ERROR => tracelogging::Level::Error,
+            tracing_core::Level::WARN => tracelogging::Level::Warning,
+            tracing_core::Level::INFO => tracelogging::Level::Informational,
+            tracing_core::Level::DEBUG => tracelogging::Level::Verbose,
+            tracing_core::Level::TRACE => {
+                tracelogging::Level::from_int(tracelogging::Level::Verbose.as_int() + 1)
+            }
+        }
+    }
+}
+
+impl<Mode: OutputMode> super::EventWriter<NormalOutput> for Provider<Mode> {
     fn span_start<'a, 'b, R>(
         self: Pin<&Self>,
         span: &'b SpanRef<'a, R>,
@@ -384,37 +384,6 @@ impl AddFieldAndValue for CommonSchemaPartCBuilder<'_> {
 }
 
 impl<Mode: OutputMode> super::EventWriter<CommonSchemaOutput> for Provider<Mode> {
-    fn new<G>(
-        provider_name: &str,
-        provider_id: &G,
-        provider_group: &Option<ProviderGroupType>,
-        _default_keyword: u64,
-    ) -> Pin<Arc<Self>>
-    where
-        for<'a> &'a G: Into<crate::native::GuidWrapper>,
-    {
-        let mut options = tracelogging_dynamic::Provider::options();
-        if let Some(guid) = provider_group {
-            options.group_id(guid);
-        }
-
-        options.callback(callback_fn, 0);
-
-        let wrapper = Arc::pin(Self {
-            provider: tracelogging_dynamic::Provider::new_with_id(
-                provider_name,
-                &options,
-                &provider_id.into().into(),
-            ),
-            _mode: PhantomData,
-        });
-        unsafe {
-            wrapper.as_ref().get_provider().register();
-        }
-
-        wrapper
-    }
-
     fn span_start<'a, 'b, R>(
         self: Pin<&Self>,
         _span: &'b SpanRef<'a, R>,

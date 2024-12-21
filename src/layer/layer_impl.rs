@@ -1,9 +1,13 @@
-use std::time::SystemTime;
+use std::{
+    hash::BuildHasherDefault, sync::{LazyLock, RwLock}, time::SystemTime
+};
 
 use tracing::Subscriber;
 #[allow(unused_imports)] // Many imports are used exclusively by feature-gated code
 use tracing_core::{callsite, span};
 use tracing_subscriber::{registry::LookupSpan, Layer};
+use hashbrown::HashMap;
+use hashers::fnv::FNV1aHasher64;
 
 use crate::{
     native::EventWriter,
@@ -13,11 +17,15 @@ use crate::{
 
 use super::*;
 
+static SPAN_DATA: LazyLock<RwLock<HashMap<tracing::span::Id, SpanData, BuildHasherDefault<FNV1aHasher64>>>> = LazyLock::new(|| {
+    RwLock::new(HashMap::with_hasher(BuildHasherDefault::<FNV1aHasher64>::default()))
+});
+
 struct SpanData {
     fields: Box<[FieldValueIndex]>,
     activity_id: [u8; 16], // // if set, byte 0 is 1 and 64-bit span ID in the lower 8 bytes
     related_activity_id: [u8; 16], // if set, byte 0 is 1 and 64-bit span ID in the lower 8 bytes
-    start_time: SystemTime,
+    start_time: RwLock<SystemTime>,
 }
 
 impl<S, OutMode: OutputMode + 'static> Layer<S> for EtwLayer<S, OutMode>
@@ -120,7 +128,8 @@ where
             return;
         };
 
-        if span.extensions().get::<SpanData>().is_some() {
+        if SPAN_DATA.read().unwrap().contains_key(&span.id()) {
+            // This shouldn't be possible, but it needs to be checked for just in case.
             return;
         }
 
@@ -163,7 +172,7 @@ where
                 fields: v.into_boxed_slice(),
                 activity_id: *GLOBAL_ACTIVITY_SEED,
                 related_activity_id: *GLOBAL_ACTIVITY_SEED,
-                start_time: SystemTime::UNIX_EPOCH,
+                start_time: RwLock::new(SystemTime::UNIX_EPOCH),
             }
         };
 
@@ -183,9 +192,7 @@ where
             fields: &mut data.fields,
         });
 
-        // This will unfortunately box data. It would be ideal if we could avoid this second heap allocation
-        // by packing everything into a single alloc.
-        span.extensions_mut().replace(data);
+        SPAN_DATA.write().unwrap().insert(span.id(), data);
     }
 
     fn on_enter(&self, id: &span::Id, ctx: tracing_subscriber::layer::Context<'_, S>) {
@@ -200,8 +207,8 @@ where
 
         let metadata = span.metadata();
 
-        let mut extensions = span.extensions_mut();
-        let data = if let Some(data) = extensions.get_mut::<SpanData>() {
+        let mut span_data_guard = SPAN_DATA.write().unwrap();
+        let data = if let Some(data) = span_data_guard.get_mut(&span.id()) {
             data
         } else {
             // We got a span that was entered without being new'ed?
@@ -226,7 +233,8 @@ where
             tag,
         );
 
-        data.start_time = timestamp;
+        let mut guard = data.start_time.write().unwrap();
+        *guard = timestamp;
     }
 
     fn on_exit(&self, id: &span::Id, ctx: tracing_subscriber::layer::Context<'_, S>) {
@@ -241,8 +249,8 @@ where
 
         let metadata = span.metadata();
 
-        let mut extensions = span.extensions_mut();
-        let data = if let Some(data) = extensions.get_mut::<SpanData>() {
+        let span_data_guard = SPAN_DATA.read().unwrap();
+        let data = if let Some(data) = span_data_guard.get(&span.id()) {
             data
         } else {
             // We got a span that was entered without being new'ed?
@@ -258,7 +266,7 @@ where
 
         self.layer.provider.as_ref().span_stop(
             &span,
-            (data.start_time, stop_timestamp),
+            (*data.start_time.read().unwrap(), stop_timestamp),
             &data.activity_id,
             &data.related_activity_id,
             &data.fields,
@@ -287,8 +295,8 @@ where
             return;
         };
 
-        let mut extensions = span.extensions_mut();
-        let data = if let Some(data) = extensions.get_mut::<SpanData>() {
+        let mut span_data_guard = SPAN_DATA.write().unwrap();
+        let data = if let Some(data) = span_data_guard.get_mut(&span.id()) {
             data
         } else {
             // We got a span that was entered without being new'ed?

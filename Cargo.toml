@@ -16,9 +16,9 @@ crate-type = ["rlib"]
 global_filter = []
 
 [dependencies]
-tracing = {version = "0.1", default-features = false, features = ["std"]}
+tracing = {version = "0.1", default-features = false}
 tracing-core = {version = "0.1", default-features = false}
-tracing-subscriber = {version="0.3", default-features = false, features=["std", "registry"]}
+tracing-subscriber = {version="0.3", default-features = false, features=["registry"]}
 chrono = {version="0.4", default-features = false, features=["std"]}
 paste = "1"
 thiserror = {version="2", default-features = false}

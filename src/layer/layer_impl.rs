@@ -1,5 +1,5 @@
 use std::{
-    hash::BuildHasherDefault, sync::{LazyLock, RwLock}, time::SystemTime
+    hash::{BuildHasher, Hash, Hasher}, sync::RwLock, time::SystemTime
 };
 
 use tracing::Subscriber;
@@ -17,15 +17,39 @@ use crate::{
 
 use super::*;
 
-static SPAN_DATA: LazyLock<RwLock<HashMap<tracing::span::Id, SpanData, BuildHasherDefault<FNV1aHasher64>>>> = LazyLock::new(|| {
-    RwLock::new(HashMap::with_hasher(BuildHasherDefault::<FNV1aHasher64>::default()))
-});
+static SPAN_DATA: RwLock<HashMap<tracing::span::Id, SpanData, FNV1aHasher64HasherBuilder>> =
+    RwLock::new(HashMap::with_hasher(FNV1aHasher64HasherBuilder::new()));
+
+#[derive(Default)]
+struct FNV1aHasher64HasherBuilder {}
+impl FNV1aHasher64HasherBuilder {
+    const fn new() -> Self {
+        Self {}
+    }
+}
+
+impl BuildHasher for FNV1aHasher64HasherBuilder {
+    type Hasher = FNV1aHasher64;
+    fn build_hasher(&self) -> Self::Hasher {
+        FNV1aHasher64::default()
+    }
+
+    fn hash_one<T: Hash>(&self, x: T) -> u64
+    where
+        Self: Sized,
+        Self::Hasher: Hasher,
+    {
+        let mut hasher = self.build_hasher();
+        x.hash(&mut hasher);
+        hasher.finish()
+    }
+}
 
 struct SpanData {
     fields: Box<[FieldValueIndex]>,
     activity_id: [u8; 16], // // if set, byte 0 is 1 and 64-bit span ID in the lower 8 bytes
     related_activity_id: [u8; 16], // if set, byte 0 is 1 and 64-bit span ID in the lower 8 bytes
-    start_time: RwLock<SystemTime>,
+    start_time: SystemTime,
 }
 
 impl<S, OutMode: OutputMode + 'static> Layer<S> for EtwLayer<S, OutMode>
@@ -172,7 +196,7 @@ where
                 fields: v.into_boxed_slice(),
                 activity_id: *GLOBAL_ACTIVITY_SEED,
                 related_activity_id: *GLOBAL_ACTIVITY_SEED,
-                start_time: RwLock::new(SystemTime::UNIX_EPOCH),
+                start_time: SystemTime::UNIX_EPOCH,
             }
         };
 
@@ -233,8 +257,12 @@ where
             tag,
         );
 
-        let mut guard = data.start_time.write().unwrap();
-        *guard = timestamp;
+        // TODO:
+        //   - In order to mutate this, we currently have to lock the entire hashmap every time a span is entered.
+        //     This is not great for performance.
+        //   - A span can be entered multiple times in a row without being exited. Storing the start time like this
+        //     is insufficient for associating a start and stop event.
+        data.start_time = timestamp;
     }
 
     fn on_exit(&self, id: &span::Id, ctx: tracing_subscriber::layer::Context<'_, S>) {
@@ -266,7 +294,7 @@ where
 
         self.layer.provider.as_ref().span_stop(
             &span,
-            (*data.start_time.read().unwrap(), stop_timestamp),
+            (data.start_time, stop_timestamp),
             &data.activity_id,
             &data.related_activity_id,
             &data.fields,

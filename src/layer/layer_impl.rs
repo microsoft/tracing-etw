@@ -152,11 +152,6 @@ where
             return;
         };
 
-        if SPAN_DATA.read().unwrap().contains_key(&span.id()) {
-            // This shouldn't be possible, but it needs to be checked for just in case.
-            return;
-        }
-
         let metadata = span.metadata();
 
         let parent_span_id = if attrs.is_contextual() {
@@ -216,6 +211,11 @@ where
             fields: &mut data.fields,
         });
 
+        // The tracing_subscriber::Registry guarantees that there will only ever be 1 span with a given ID
+        // active at any time, but other implementations may not provide the same guarantees.
+        // The Subscriber trait allows for this, and says any spans with the same ID can be considered
+        // as having identical metadata and attributes (even if they are not actually identical).
+        // We can thus just overwrite any potentially existing spans with this ID.
         SPAN_DATA.write().unwrap().insert(span.id(), data);
     }
 

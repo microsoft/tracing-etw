@@ -215,10 +215,11 @@ impl<OutMode: OutputMode + 'static> LayerBuilder<OutMode> {
         targets
     }
 
+    // Builds a layer without any enable checks, unless global_filter is enabled
     fn build_layer<S>(&self) -> EtwLayer<S, OutMode>
     where
         S: Subscriber + for<'a> LookupSpan<'a>,
-        crate::native::Provider<OutMode>: EventWriter<OutMode>,
+        crate::native::Provider<OutMode>: ProviderTraits + EventWriter<OutMode>,
     {
         EtwLayer::<S, OutMode> {
             layer: _EtwLayer {
@@ -234,6 +235,7 @@ impl<OutMode: OutputMode + 'static> LayerBuilder<OutMode> {
         }
     }
 
+    // The filter is responsible for the enabled checks for the layer
     #[cfg(any(not(feature = "global_filter"), docsrs))]
     fn build_filter<S>(&self, layer: _EtwLayer<S, OutMode>) -> EtwFilter<S, OutMode>
     where
@@ -247,7 +249,7 @@ impl<OutMode: OutputMode + 'static> LayerBuilder<OutMode> {
     pub fn build_global_filter<S>(self) -> Result<EtwLayer<S, OutMode>, EtwError>
     where
         S: Subscriber + for<'a> LookupSpan<'a>,
-        crate::native::Provider<OutMode>: EventWriter<OutMode>,
+        crate::native::Provider<OutMode>: ProviderTraits + EventWriter<OutMode>,
     {
         self.validate_config()?;
 
@@ -271,7 +273,7 @@ impl<OutMode: OutputMode + 'static> LayerBuilder<OutMode> {
     ) -> Result<Filtered<EtwLayer<S, OutMode>, EtwFilter<S, OutMode>, S>, EtwError>
     where
         S: Subscriber + for<'a> LookupSpan<'a>,
-        crate::native::Provider<OutMode>: EventWriter<OutMode>,
+        crate::native::Provider<OutMode>: ProviderTraits + EventWriter<OutMode>,
     {
         self.validate_config()?;
 
@@ -312,7 +314,7 @@ impl<OutMode: OutputMode + 'static> LayerBuilder<OutMode> {
     ) -> Result<Filtered<EtwLayer<S, OutMode>, And<EtwFilter<S, OutMode>, Targets, S>, S>, EtwError>
     where
         S: Subscriber + for<'a> LookupSpan<'a>,
-        crate::native::Provider<OutMode>: EventWriter<OutMode>,
+        crate::native::Provider<OutMode>: ProviderTraits + EventWriter<OutMode>,
     {
         self.validate_config()?;
 
@@ -323,5 +325,21 @@ impl<OutMode: OutputMode + 'static> LayerBuilder<OutMode> {
         let targets = self.build_target_filter(target);
 
         Ok(layer.with_filter(filter.and(targets)))
+    }
+
+    // Private. For integration tests only. Skips adding enablement checks. Serves
+    // absolutely no purposes outside of making testing easier.
+    #[doc(hidden)]
+    pub fn __build_for_test<S>(
+        self,
+    ) -> Result<EtwLayer<S, OutMode>, EtwError>
+    where
+        S: Subscriber + for<'a> LookupSpan<'a>,
+        crate::native::Provider<OutMode>: ProviderTraits + EventWriter<OutMode>,
+    {
+        // By skipping the adding the filter, we can avoid the enablement checks and
+        // ensure the code is actually being run and writing an event, without needing
+        // to set up an external listener.
+        Ok(self.build_layer())
     }
 }

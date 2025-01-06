@@ -2,7 +2,7 @@
 
 use criterion::{criterion_group, criterion_main, Criterion};
 #[cfg(target_os = "windows")]
-use etw_helpers::{FileMode, SessionBuilder};
+//use etw_helpers::{FileMode, SessionBuilder};
 use tracing::{event, span, Level};
 use tracing_etw::*;
 use tracing_subscriber::{self, prelude::*};
@@ -10,19 +10,19 @@ use tracing_subscriber::{self, prelude::*};
 #[cfg(target_os = "windows")]
 pub fn etw_benchmark(c: &mut Criterion) {
     let builder = LayerBuilder::new("etw_bench");
-    let provider_id = builder.get_provider_id();
+    //let provider_id = builder.get_provider_id();
     let _subscriber = tracing_subscriber::registry()
-        .with(builder.build().unwrap())
+        .with(builder.__build_for_test().unwrap())
         .init();
 
-    let etw_session = SessionBuilder::new_file_mode(
-        "tokio-tracing-etw-bench",
-        "etw_bench.etl",
-        FileMode::Sequential,
-    )
-    .buffer_counts(128, 128, 128)
-    .realtime_event_delivery();
-    let session = etw_session.start(true).expect("can't start etw session");
+    // let etw_session = SessionBuilder::new_file_mode(
+    //     "tokio-tracing-etw-bench",
+    //     "etw_bench.etl",
+    //     FileMode::Sequential,
+    // )
+    // .buffer_counts(128, 128, 128)
+    // .realtime_event_delivery();
+    // let session = etw_session.start(true).expect("can't start etw session");
 
     // Disabled provider
     {
@@ -43,9 +43,9 @@ pub fn etw_benchmark(c: &mut Criterion) {
         });
     }
 
-    session
-        .enable_provider(&provider_id.to_u128().into(), 0xFF)
-        .expect("can't enable provider to session");
+    // session
+    //     .enable_provider(&provider_id.to_u128().into(), 0xFF)
+    //     .expect("can't enable provider to session");
 
     // Spans
     {

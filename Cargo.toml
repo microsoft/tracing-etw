@@ -16,13 +16,14 @@ crate-type = ["rlib"]
 global_filter = []
 
 [dependencies]
-tracing = {version = "0.1", default-features = false, features = ["std"]}
+tracing = {version = "0.1", default-features = false}
 tracing-core = {version = "0.1", default-features = false}
-tracing-subscriber = {version="0.3", default-features = false, features=["std", "fmt", "registry"]}
+tracing-subscriber = {version="0.3", default-features = false, features=["registry"]}
 chrono = {version="0.4", default-features = false, features=["std"]}
 paste = "1"
 thiserror = {version="2", default-features = false}
 hashers = "1"
+hashbrown = "0.15"
 
 [target.'cfg(not(target_os = "linux"))'.dependencies]
 tracelogging = ">= 1.2.0"
@@ -35,6 +36,7 @@ eventheader_dynamic = ">= 0.4"
 [dev-dependencies]
 criterion = {version="0.5", features=["html_reports"]}
 tracing = {version = "0.1", default-features = false, features = ["std", "attributes"]}
+tracing-subscriber = {version="0.3", default-features = false, features=["std", "fmt", "registry"]}
 
 [target.'cfg(windows)'.dev-dependencies]
 windows = {version="0.58", features=["Win32_System_Diagnostics_Etw", "Win32_Foundation", "Win32_System_Time"]}

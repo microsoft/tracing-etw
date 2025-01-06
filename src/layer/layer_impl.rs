@@ -1,9 +1,13 @@
-use std::time::SystemTime;
+use std::{
+    hash::{BuildHasher, Hash, Hasher}, sync::RwLock, time::SystemTime
+};
 
 use tracing::Subscriber;
 #[allow(unused_imports)] // Many imports are used exclusively by feature-gated code
 use tracing_core::{callsite, span};
 use tracing_subscriber::{registry::LookupSpan, Layer};
+use hashbrown::HashMap;
+use hashers::fnv::FNV1aHasher64;
 
 use crate::{
     native::EventWriter,
@@ -12,6 +16,34 @@ use crate::{
 };
 
 use super::*;
+
+static SPAN_DATA: RwLock<HashMap<tracing::span::Id, SpanData, FNV1aHasher64HasherBuilder>> =
+    RwLock::new(HashMap::with_hasher(FNV1aHasher64HasherBuilder::new()));
+
+#[derive(Default)]
+struct FNV1aHasher64HasherBuilder {}
+impl FNV1aHasher64HasherBuilder {
+    const fn new() -> Self {
+        Self {}
+    }
+}
+
+impl BuildHasher for FNV1aHasher64HasherBuilder {
+    type Hasher = FNV1aHasher64;
+    fn build_hasher(&self) -> Self::Hasher {
+        FNV1aHasher64::default()
+    }
+
+    fn hash_one<T: Hash>(&self, x: T) -> u64
+    where
+        Self: Sized,
+        Self::Hasher: Hasher,
+    {
+        let mut hasher = self.build_hasher();
+        x.hash(&mut hasher);
+        hasher.finish()
+    }
+}
 
 struct SpanData {
     fields: Box<[FieldValueIndex]>,
@@ -120,10 +152,6 @@ where
             return;
         };
 
-        if span.extensions().get::<SpanData>().is_some() {
-            return;
-        }
-
         let metadata = span.metadata();
 
         let parent_span_id = if attrs.is_contextual() {
@@ -183,9 +211,12 @@ where
             fields: &mut data.fields,
         });
 
-        // This will unfortunately box data. It would be ideal if we could avoid this second heap allocation
-        // by packing everything into a single alloc.
-        span.extensions_mut().replace(data);
+        // The tracing_subscriber::Registry guarantees that there will only ever be 1 span with a given ID
+        // active at any time, but other implementations may not provide the same guarantees.
+        // The Subscriber trait allows for this, and says any spans with the same ID can be considered
+        // as having identical metadata and attributes (even if they are not actually identical).
+        // We can thus just overwrite any potentially existing spans with this ID.
+        SPAN_DATA.write().unwrap().insert(span.id(), data);
     }
 
     fn on_enter(&self, id: &span::Id, ctx: tracing_subscriber::layer::Context<'_, S>) {
@@ -200,11 +231,11 @@ where
 
         let metadata = span.metadata();
 
-        let mut extensions = span.extensions_mut();
-        let data = if let Some(data) = extensions.get_mut::<SpanData>() {
+        let mut span_data_guard = SPAN_DATA.write().unwrap();
+        let data = if let Some(data) = span_data_guard.get_mut(&span.id()) {
             data
         } else {
-            // We got a span that was entered without being new'ed?
+            debug_assert!(false, "Enter of unrecognized span");
             return;
         };
 
@@ -226,6 +257,11 @@ where
             tag,
         );
 
+        // TODO:
+        //   - In order to mutate this, we currently have to lock the entire hashmap every time a span is entered.
+        //     This is not great for performance.
+        //   - A span can be entered multiple times in a row without being exited. Storing the start time like this
+        //     is insufficient for associating a start and stop event.
         data.start_time = timestamp;
     }
 
@@ -241,11 +277,11 @@ where
 
         let metadata = span.metadata();
 
-        let mut extensions = span.extensions_mut();
-        let data = if let Some(data) = extensions.get_mut::<SpanData>() {
+        let span_data_guard = SPAN_DATA.read().unwrap();
+        let data = if let Some(data) = span_data_guard.get(&span.id()) {
             data
         } else {
-            // We got a span that was entered without being new'ed?
+            debug_assert!(false, "Exit of unrecognized span");
             return;
         };
 
@@ -268,9 +304,11 @@ where
         );
     }
 
-    fn on_close(&self, _id: span::Id, _ctx: tracing_subscriber::layer::Context<'_, S>) {
-        // A span was closed
-        // Good for knowing when to log a summary event?
+    fn on_close(&self, id: span::Id, _ctx: tracing_subscriber::layer::Context<'_, S>) {
+        let mut span_data_guard = SPAN_DATA.write().unwrap();
+        if let None = span_data_guard.remove(&id) {
+            debug_assert!(false, "Close of unrecognized span");
+        }
     }
 
     fn on_record(
@@ -287,11 +325,11 @@ where
             return;
         };
 
-        let mut extensions = span.extensions_mut();
-        let data = if let Some(data) = extensions.get_mut::<SpanData>() {
+        let mut span_data_guard = SPAN_DATA.write().unwrap();
+        let data = if let Some(data) = span_data_guard.get_mut(&span.id()) {
             data
         } else {
-            // We got a span that was entered without being new'ed?
+            debug_assert!(false, "Event on unrecognized span");
             return;
         };
 

@@ -117,6 +117,42 @@ impl<OutMode: OutputMode> crate::native::ProviderTraits for Provider<OutMode> {
             false
         }
     }
+
+    fn new<G>(
+        provider_name: &str,
+        _: &G,
+        provider_group: &Option<ProviderGroupType>,
+        default_keyword: u64,
+    ) -> Pin<Arc<Self>>
+    where
+        for<'a> &'a G: Into<crate::native::GuidWrapper>,
+    {
+        let mut options = eventheader_dynamic::Provider::new_options();
+        if let Some(ref name) = provider_group {
+            options = *options.group_name(name);
+        }
+        let mut provider = eventheader_dynamic::Provider::new(provider_name, &options);
+
+        // Keywords are static, but levels are dynamic so we have to register them all
+        for event in crate::statics::event_metadata() {
+            provider.register_set(Self::map_level(&tracing::Level::ERROR), event.kw);
+            provider.register_set(Self::map_level(&tracing::Level::WARN), event.kw);
+            provider.register_set(Self::map_level(&tracing::Level::INFO), event.kw);
+            provider.register_set(Self::map_level(&tracing::Level::DEBUG), event.kw);
+            provider.register_set(Self::map_level(&tracing::Level::TRACE), event.kw);
+        }
+
+        provider.register_set(Self::map_level(&tracing::Level::ERROR), default_keyword);
+        provider.register_set(Self::map_level(&tracing::Level::WARN), default_keyword);
+        provider.register_set(Self::map_level(&tracing::Level::INFO), default_keyword);
+        provider.register_set(Self::map_level(&tracing::Level::DEBUG), default_keyword);
+        provider.register_set(Self::map_level(&tracing::Level::TRACE), default_keyword);
+
+        Arc::pin(Self {
+            provider: std::sync::RwLock::new(provider),
+            _m: PhantomData,
+        })
+    }
 }
 
 impl<OutMode: OutputMode> Provider<OutMode> {
@@ -158,42 +194,6 @@ impl<OutMode: OutputMode> Provider<OutMode> {
 }
 
 impl<Mode: OutputMode> super::EventWriter<NormalOutput> for Provider<Mode> {
-    fn new<G>(
-        provider_name: &str,
-        _: &G,
-        provider_group: &Option<ProviderGroupType>,
-        default_keyword: u64,
-    ) -> Pin<Arc<Self>>
-    where
-        for<'a> &'a G: Into<crate::native::GuidWrapper>,
-    {
-        let mut options = eventheader_dynamic::Provider::new_options();
-        if let Some(ref name) = provider_group {
-            options = *options.group_name(name);
-        }
-        let mut provider = eventheader_dynamic::Provider::new(provider_name, &options);
-
-        // Keywords are static, but levels are dynamic so we have to register them all
-        for event in crate::statics::event_metadata() {
-            provider.register_set(Self::map_level(&tracing::Level::ERROR), event.kw);
-            provider.register_set(Self::map_level(&tracing::Level::WARN), event.kw);
-            provider.register_set(Self::map_level(&tracing::Level::INFO), event.kw);
-            provider.register_set(Self::map_level(&tracing::Level::DEBUG), event.kw);
-            provider.register_set(Self::map_level(&tracing::Level::TRACE), event.kw);
-        }
-
-        provider.register_set(Self::map_level(&tracing::Level::ERROR), default_keyword);
-        provider.register_set(Self::map_level(&tracing::Level::WARN), default_keyword);
-        provider.register_set(Self::map_level(&tracing::Level::INFO), default_keyword);
-        provider.register_set(Self::map_level(&tracing::Level::DEBUG), default_keyword);
-        provider.register_set(Self::map_level(&tracing::Level::TRACE), default_keyword);
-
-        Arc::pin(Provider {
-            provider: std::sync::RwLock::new(provider),
-            _m: PhantomData,
-        })
-    }
-
     fn span_start<'a, 'b, R>(
         self: Pin<&Self>,
         span: &'b SpanRef<'a, R>,
@@ -424,42 +424,6 @@ impl AddFieldAndValue for CommonSchemaPartCBuilder<'_> {
 }
 
 impl<Mode: OutputMode> super::EventWriter<CommonSchemaOutput> for Provider<Mode> {
-    fn new<G>(
-        provider_name: &str,
-        _: &G,
-        provider_group: &Option<ProviderGroupType>,
-        default_keyword: u64,
-    ) -> Pin<Arc<Self>>
-    where
-        for<'a> &'a G: Into<crate::native::GuidWrapper>,
-    {
-        let mut options = eventheader_dynamic::Provider::new_options();
-        if let Some(ref name) = provider_group {
-            options = *options.group_name(name);
-        }
-        let mut provider = eventheader_dynamic::Provider::new(provider_name, &options);
-
-        // Keywords are static, but levels are dynamic so we have to register them all
-        for event in crate::statics::event_metadata() {
-            provider.register_set(Self::map_level(&tracing::Level::ERROR), event.kw);
-            provider.register_set(Self::map_level(&tracing::Level::WARN), event.kw);
-            provider.register_set(Self::map_level(&tracing::Level::INFO), event.kw);
-            provider.register_set(Self::map_level(&tracing::Level::DEBUG), event.kw);
-            provider.register_set(Self::map_level(&tracing::Level::TRACE), event.kw);
-        }
-
-        provider.register_set(Self::map_level(&tracing::Level::ERROR), default_keyword);
-        provider.register_set(Self::map_level(&tracing::Level::WARN), default_keyword);
-        provider.register_set(Self::map_level(&tracing::Level::INFO), default_keyword);
-        provider.register_set(Self::map_level(&tracing::Level::DEBUG), default_keyword);
-        provider.register_set(Self::map_level(&tracing::Level::TRACE), default_keyword);
-
-        Arc::pin(Self {
-            provider: std::sync::RwLock::new(provider),
-            _m: PhantomData,
-        })
-    }
-
     fn span_start<'a, 'b, R>(
         self: Pin<&Self>,
         _span: &'b SpanRef<'a, R>,

@@ -111,6 +111,15 @@ impl OutputMode for CommonSchemaOutput {}
 
 #[doc(hidden)]
 pub trait ProviderTraits {
+    fn new<G>(
+        provider_name: &str,
+        provider_id: &G,
+        provider_group: &Option<ProviderGroupType>,
+        _default_keyword: u64,
+    ) -> std::pin::Pin<std::sync::Arc<Self>>
+    where
+        for<'a> &'a G: Into<GuidWrapper>;
+
     fn supports_enable_callback() -> bool;
 
     fn is_valid_provider(provider_name: &str) -> Result<(), EtwError>;
@@ -122,15 +131,6 @@ pub trait ProviderTraits {
 
 #[doc(hidden)]
 pub trait EventWriter<OutMode: OutputMode> {
-    fn new<G>(
-        provider_name: &str,
-        provider_id: &G,
-        provider_group: &Option<ProviderGroupType>,
-        _default_keyword: u64,
-    ) -> std::pin::Pin<std::sync::Arc<Self>>
-    where
-        for<'a> &'a G: Into<GuidWrapper>;
-
     #[allow(clippy::too_many_arguments)]
     fn span_start<'a, 'b, R>(
         self: std::pin::Pin<&Self>,

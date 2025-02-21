@@ -1,7 +1,5 @@
 use std::{marker::PhantomData, pin::Pin, sync::Arc, time::SystemTime};
 
-use tracing_subscriber::registry::{LookupSpan, SpanRef};
-
 use crate::error::EtwError;
 
 use super::OutputMode;
@@ -46,34 +44,21 @@ impl<Mode: OutputMode> crate::native::ProviderTraits for Provider<Mode> {
 }
 
 impl<OutMode: OutputMode> crate::native::EventWriter<OutMode> for Provider<OutMode> {
-    fn span_start<'a, 'b, R>(
+    fn span_start<'a, 'b>(
         self: Pin<&Self>,
-        _span: &'b SpanRef<'a, R>,
-        _timestamp: SystemTime,
-        _activity_id: &[u8; 16],
-        _related_activity_id: &[u8; 16],
-        _fields: &'b [crate::values::span_values::FieldValueIndex],
-        _level: &tracing_core::Level,
+        _data: crate::layer::common::SpanRef,
         _keyword: u64,
         _event_tag: u32,
-    ) where
-        R: LookupSpan<'a>,
-    {
+    ) {
     }
 
-    fn span_stop<'a, 'b, R>(
+    fn span_stop<'a, 'b>(
         self: Pin<&Self>,
-        _span: &'b SpanRef<'a, R>,
         _start_stop_times: (std::time::SystemTime, std::time::SystemTime),
-        _activity_id: &[u8; 16],
-        _related_activity_id: &[u8; 16],
-        _fields: &'b [crate::values::span_values::FieldValueIndex],
-        _level: &tracing_core::Level,
+        _data: crate::layer::common::SpanRef,
         _keyword: u64,
         _event_tag: u32,
-    ) where
-        R: LookupSpan<'a>,
-    {
+    ) {
     }
 
     fn write_record(

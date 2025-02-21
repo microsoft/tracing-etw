@@ -1,17 +1,21 @@
-use crate::statics::GLOBAL_ACTIVITY_SEED;
 use crate::{
     error::EtwError,
     native::{CommonSchemaOutput, NormalOutput, OutputMode},
+    statics::GLOBAL_ACTIVITY_SEED,
     values::{event_values::*, *},
 };
+
+use core::{cell::RefCell, marker::PhantomData, mem::MaybeUninit, ops::DerefMut, pin::Pin};
+// TODO: no_std
+use std::{
+    io::{Cursor, Write},
+    sync::Arc,
+    time::SystemTime,
+};
+
 use chrono::{Datelike, Timelike};
-use std::io::{Cursor, Write};
-use std::marker::PhantomData;
-use std::mem::MaybeUninit;
-use std::{cell::RefCell, ops::DerefMut, pin::Pin, sync::Arc, time::SystemTime};
 use tracelogging::*;
 use tracelogging_dynamic::EventBuilder;
-use tracing_subscriber::registry::{LookupSpan, SpanRef};
 
 // Items within this .rdata section will be sorted alphabetically, thus the start is named with "0", the end "9", and each metadata "5".
 // If these statics aren't mut then everything will silently fail to work.
@@ -177,35 +181,26 @@ impl<Mode: OutputMode> Provider<Mode> {
 }
 
 impl<Mode: OutputMode> super::EventWriter<NormalOutput> for Provider<Mode> {
-    fn span_start<'a, 'b, R>(
+    fn span_start<'a, 'b>(
         self: Pin<&Self>,
-        span: &'b SpanRef<'a, R>,
-        timestamp: SystemTime,
-        activity_id: &[u8; 16],
-        related_activity_id: &[u8; 16],
-        fields: &'b [crate::values::span_values::FieldValueIndex],
-        level: &tracing_core::Level,
+        data: crate::layer::common::SpanRef,
         keyword: u64,
         event_tag: u32,
-    ) where
-        R: LookupSpan<'a>,
-    {
-        let span_name = span.name();
-
+    ) {
         EBW.with(|eb| {
             let mut eb = eb.borrow_mut();
 
-            eb.reset(span_name, Self::map_level(level), keyword, event_tag);
+            eb.reset(data.name(), Self::map_level(&data.level()), keyword, event_tag);
             eb.opcode(Opcode::Start);
 
             eb.add_systemtime(
                 "start time",
-                &Into::<Win32SystemTime>::into(timestamp).st,
+                &Into::<Win32SystemTime>::into(data.timestamp()).st,
                 OutType::DateTimeUtc,
                 0,
             );
 
-            for f in fields {
+            for f in data.fields() {
                 <&mut EventBuilder as AddFieldAndValue>::add_field_value(
                     &mut eb.deref_mut(),
                     &FieldAndValue {
@@ -215,16 +210,16 @@ impl<Mode: OutputMode> super::EventWriter<NormalOutput> for Provider<Mode> {
                 );
             }
 
-            let act = tracelogging_dynamic::Guid::from_bytes_le(activity_id);
-            let related = tracelogging_dynamic::Guid::from_bytes_le(related_activity_id);
+            let act = tracelogging_dynamic::Guid::from_bytes_le(data.activity_id());
+            let related = tracelogging_dynamic::Guid::from_bytes_le(data.related_activity_id());
             let _ = eb.write(
                 &self.get_provider(),
-                if activity_id[0] != 0 {
+                if data.activity_id()[0] != 0 {
                     Some(&act)
                 } else {
                     None
                 },
-                if related_activity_id[0] != 0 {
+                if data.related_activity_id()[0] != 0 {
                     Some(&related)
                 } else {
                     None
@@ -233,25 +228,17 @@ impl<Mode: OutputMode> super::EventWriter<NormalOutput> for Provider<Mode> {
         });
     }
 
-    fn span_stop<'a, 'b, R>(
+    fn span_stop<'a, 'b>(
         self: Pin<&Self>,
-        span: &'b SpanRef<'a, R>,
         start_stop_times: (std::time::SystemTime, std::time::SystemTime),
-        activity_id: &[u8; 16],
-        related_activity_id: &[u8; 16],
-        fields: &'b [crate::values::span_values::FieldValueIndex],
-        level: &tracing_core::Level,
+        data: crate::layer::common::SpanRef,
         keyword: u64,
         event_tag: u32,
-    ) where
-        R: LookupSpan<'a>,
-    {
-        let span_name = span.name();
-
+    ) {
         EBW.with(|eb| {
             let mut eb = eb.borrow_mut();
 
-            eb.reset(span_name, Self::map_level(level), keyword, event_tag);
+            eb.reset(data.name(), Self::map_level(&data.level()), keyword, event_tag);
             eb.opcode(Opcode::Stop);
 
             eb.add_systemtime(
@@ -261,7 +248,7 @@ impl<Mode: OutputMode> super::EventWriter<NormalOutput> for Provider<Mode> {
                 0,
             );
 
-            for f in fields {
+            for f in data.fields() {
                 <&mut EventBuilder as AddFieldAndValue>::add_field_value(
                     &mut eb.deref_mut(),
                     &FieldAndValue {
@@ -271,16 +258,16 @@ impl<Mode: OutputMode> super::EventWriter<NormalOutput> for Provider<Mode> {
                 );
             }
 
-            let act = tracelogging_dynamic::Guid::from_bytes_le(activity_id);
-            let related = tracelogging_dynamic::Guid::from_bytes_le(related_activity_id);
+            let act = tracelogging_dynamic::Guid::from_bytes_le(data.activity_id());
+            let related = tracelogging_dynamic::Guid::from_bytes_le(data.related_activity_id());
             let _ = eb.write(
                 &self.get_provider(),
-                if activity_id[0] != 0 {
+                if data.activity_id()[0] != 0 {
                     Some(&act)
                 } else {
                     None
                 },
-                if related_activity_id[0] != 0 {
+                if data.related_activity_id()[0] != 0 {
                     Some(&related)
                 } else {
                     None
@@ -384,47 +371,32 @@ impl AddFieldAndValue for CommonSchemaPartCBuilder<'_> {
 }
 
 impl<Mode: OutputMode> super::EventWriter<CommonSchemaOutput> for Provider<Mode> {
-    fn span_start<'a, 'b, R>(
+    fn span_start<'a, 'b>(
         self: Pin<&Self>,
-        _span: &'b SpanRef<'a, R>,
-        _timestamp: SystemTime,
-        _activity_id: &[u8; 16],
-        _related_activity_id: &[u8; 16],
-        _fields: &'b [crate::values::span_values::FieldValueIndex],
-        _level: &tracing_core::Level,
+        _data: crate::layer::common::SpanRef,
         _keyword: u64,
         _event_tag: u32,
-    ) where
-        R: LookupSpan<'a>,
-    {
+    ) {
     }
 
-    fn span_stop<'a, 'b, R>(
+    fn span_stop<'a, 'b>(
         self: Pin<&Self>,
-        span: &'b SpanRef<'a, R>,
         start_stop_times: (std::time::SystemTime, std::time::SystemTime),
-        _activity_id: &[u8; 16],
-        _related_activity_id: &[u8; 16],
-        fields: &'b [crate::values::span_values::FieldValueIndex],
-        level: &tracing_core::Level,
+        data: crate::layer::common::SpanRef,
         keyword: u64,
         event_tag: u32,
-    ) where
-        R: LookupSpan<'a>,
-    {
-        let span_name = span.name();
-
+    ) {
         let span_id = unsafe {
             let mut span_id = MaybeUninit::<[u8; 16]>::uninit();
             let mut cur = Cursor::new((*span_id.as_mut_ptr()).as_mut_slice());
-            write!(&mut cur, "{:16x}", span.id().into_u64()).expect("!write");
+            write!(&mut cur, "{:16x}", data.id()).expect("!write");
             span_id.assume_init()
         };
 
         EBW.with(|eb| {
             let mut eb = eb.borrow_mut();
 
-            eb.reset(span_name, Self::map_level(level), keyword, event_tag);
+            eb.reset(data.name(), Self::map_level(&data.level()), keyword, event_tag);
             eb.opcode(Opcode::Info);
 
             // Promoting values from PartC to PartA extensions is apparently just a draft spec
@@ -475,7 +447,7 @@ impl<Mode: OutputMode> super::EventWriter<CommonSchemaOutput> for Provider<Mode>
                     eb.add_str8("parentId", parent_span_id, OutType::Utf8, 0);
                 }
 
-                eb.add_str8("name", span_name, OutType::Utf8, 0);
+                eb.add_str8("name", data.name(), OutType::Utf8, 0);
 
                 eb.add_str8(
                     "startTime",
@@ -487,13 +459,13 @@ impl<Mode: OutputMode> super::EventWriter<CommonSchemaOutput> for Provider<Mode>
                 );
             }
 
-            let partc_field_count = span.fields().len() as u8;
+            let partc_field_count = data.field_count() as u8;
 
             eb.add_struct("PartC", partc_field_count, 0);
             {
                 let mut pfv = CommonSchemaPartCBuilder { eb: eb.deref_mut() };
 
-                for f in fields {
+                for f in data.fields() {
                     <CommonSchemaPartCBuilder<'_> as AddFieldAndValue>::add_field_value(
                         &mut pfv,
                         &FieldAndValue {

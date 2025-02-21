@@ -13,8 +13,9 @@ use tracing_subscriber::{layer::Filter, Layer};
 
 use crate::error::EtwError;
 #[cfg(any(not(feature = "global_filter"), docsrs))]
-use crate::layer::EtwFilter;
-use crate::layer::{EtwLayer, _EtwLayer};
+use crate::layer::registry_subscriber::EtwFilter;
+#[cfg(any(feature = "registry", docsrs))]
+use crate::layer::registry_subscriber::EtwLayer;
 use crate::native::{
     CommonSchemaOutput, EventWriter, GuidWrapper, NormalOutput, OutputMode, ProviderTraits,
 };
@@ -45,11 +46,11 @@ pub struct LayerBuilder<OutMode: OutputMode> {
 impl LayerBuilder<NormalOutput> {
     /// Creates a new ETW/user_events layer that will log events from a provider
     /// with the given name.
-    /// 
+    ///
     /// ```
     /// # use tracing_subscriber::prelude::*;
     /// # let reg = tracing_subscriber::registry();
-    /// # let layer = 
+    /// # let layer =
     /// tracing_etw::LayerBuilder::new("SampleProviderName")
     /// # ;
     /// # let built = layer.build();
@@ -80,7 +81,7 @@ impl LayerBuilder<CommonSchemaOutput> {
     /// ```
     /// # use tracing_subscriber::prelude::*;
     /// # let reg = tracing_subscriber::registry();
-    /// # let layer = 
+    /// # let layer =
     /// tracing_etw::LayerBuilder::new_common_schema_events("SampleProviderName")
     /// # ;
     /// # let built = layer.build();
@@ -107,7 +108,7 @@ impl<OutMode: OutputMode + 'static> LayerBuilder<OutMode> {
     /// ```
     /// # use tracing_subscriber::prelude::*;
     /// # let reg = tracing_subscriber::registry();
-    /// # let layer = 
+    /// # let layer =
     /// tracing_etw::LayerBuilder::new("SampleProviderName")
     ///     .with_provider_id(&tracing_etw::native::GuidWrapper::from_name("SampleProviderName"))
     /// # ;
@@ -155,13 +156,13 @@ impl<OutMode: OutputMode + 'static> LayerBuilder<OutMode> {
     ///
     /// Keyword value `0` is special in ETW (but not user_events), and should
     /// not be used.
-    /// 
+    ///
     /// Keywords in ETW are bitmasks, with the high 16 bits being reserved by Microsoft.
     /// See <https://learn.microsoft.com/en-us/windows/win32/wes/defining-keywords-used-to-classify-types-of-events>
     /// for more information about keywords in ETW.
-    /// 
+    ///
     /// Keywords in user_events are not bitmasks.
-    /// 
+    ///
     /// ```
     /// # use tracing_subscriber::prelude::*;
     /// # let reg = tracing_subscriber::registry();
@@ -183,7 +184,7 @@ impl<OutMode: OutputMode + 'static> LayerBuilder<OutMode> {
     /// Set the provider group to join this provider to.
     ///
     /// For ETW, the group ID must be a GUID.
-    /// 
+    ///
     /// For user_events, the group ID must be a string.
     pub fn with_provider_group<G>(mut self, group_id: &G) -> Self
     where
@@ -222,22 +223,20 @@ impl<OutMode: OutputMode + 'static> LayerBuilder<OutMode> {
         crate::native::Provider<OutMode>: ProviderTraits + EventWriter<OutMode>,
     {
         EtwLayer::<S, OutMode> {
-            layer: _EtwLayer {
-                provider: crate::native::Provider::<OutMode>::new(
-                    &self.provider_name,
-                    &self.provider_id,
-                    &self.provider_group,
-                    self.default_keyword,
-                ),
-                default_keyword: self.default_keyword,
-                _p: PhantomData,
-            },
+            provider: crate::native::Provider::<OutMode>::new(
+                &self.provider_name,
+                &self.provider_id,
+                &self.provider_group,
+                self.default_keyword,
+            ),
+            default_keyword: self.default_keyword,
+            _p: PhantomData,
         }
     }
 
     // The filter is responsible for the enabled checks for the layer
     #[cfg(any(not(feature = "global_filter"), docsrs))]
-    fn build_filter<S>(&self, layer: _EtwLayer<S, OutMode>) -> EtwFilter<S, OutMode>
+    fn build_filter<S>(&self, layer: EtwLayer<S, OutMode>) -> EtwFilter<S, OutMode>
     where
         S: Subscriber + for<'a> LookupSpan<'a>,
     {
@@ -279,7 +278,7 @@ impl<OutMode: OutputMode + 'static> LayerBuilder<OutMode> {
 
         let layer = self.build_layer();
 
-        let filter = self.build_filter(layer.layer.clone());
+        let filter = self.build_filter(layer.clone());
 
         Ok(layer.with_filter(filter))
     }
@@ -296,11 +295,11 @@ impl<OutMode: OutputMode + 'static> LayerBuilder<OutMode> {
     ///     .build_with_target("MyTargetName");
     /// assert!(built_layer.is_ok());
     /// # reg.with(built_layer.unwrap());
-    /// 
+    ///
     /// // ...
-    /// 
+    ///
     /// event!(target: "MyTargetName", tracing::Level::INFO, "My event");
-    /// 
+    ///
     /// // When build_with_target is used, the provider name is also always added as a target
     /// event!(target: "SampleProviderName", tracing::Level::INFO, "My event");
     /// ```
@@ -320,7 +319,7 @@ impl<OutMode: OutputMode + 'static> LayerBuilder<OutMode> {
 
         let layer = self.build_layer();
 
-        let filter = self.build_filter(layer.layer.clone());
+        let filter = self.build_filter(layer.clone());
 
         let targets = self.build_target_filter(target);
 
@@ -330,9 +329,7 @@ impl<OutMode: OutputMode + 'static> LayerBuilder<OutMode> {
     // Private. For integration tests only. Skips adding enablement checks. Serves
     // absolutely no purposes outside of making testing easier.
     #[doc(hidden)]
-    pub fn __build_for_test<S>(
-        self,
-    ) -> Result<EtwLayer<S, OutMode>, EtwError>
+    pub fn __build_for_test<S>(self) -> Result<EtwLayer<S, OutMode>, EtwError>
     where
         S: Subscriber + for<'a> LookupSpan<'a>,
         crate::native::Provider<OutMode>: ProviderTraits + EventWriter<OutMode>,

@@ -39,6 +39,7 @@ pub(crate) use eventheader::Guid as native_guid;
 pub(crate) use tracelogging_dynamic::Guid as native_guid;
 
 use crate::error::EtwError;
+use core::pin::Pin;
 
 #[doc(hidden)]
 #[derive(Copy, Clone, PartialEq, Eq)]
@@ -116,7 +117,7 @@ pub trait ProviderTraits {
         provider_id: &G,
         provider_group: &Option<ProviderGroupType>,
         _default_keyword: u64,
-    ) -> std::pin::Pin<std::sync::Arc<Self>>
+    ) -> Pin<std::sync::Arc<Self>>
     where
         for<'a> &'a G: Into<GuidWrapper>;
 
@@ -131,37 +132,24 @@ pub trait ProviderTraits {
 
 #[doc(hidden)]
 pub trait EventWriter<OutMode: OutputMode> {
-    #[allow(clippy::too_many_arguments)]
-    fn span_start<'a, 'b, R>(
-        self: std::pin::Pin<&Self>,
-        span: &'b tracing_subscriber::registry::SpanRef<'a, R>,
-        timestamp: std::time::SystemTime,
-        activity_id: &[u8; 16],
-        related_activity_id: &[u8; 16],
-        fields: &'b [crate::values::span_values::FieldValueIndex],
-        level: &tracing_core::Level,
+    fn span_start<'a, 'b>(
+        self: Pin<&Self>,
+        data: crate::layer::common::SpanRef,
         keyword: u64,
         event_tag: u32,
-    ) where
-        R: tracing_subscriber::registry::LookupSpan<'a>;
+    );
 
-    #[allow(clippy::too_many_arguments)]
-    fn span_stop<'a, 'b, R>(
-        self: std::pin::Pin<&Self>,
-        span: &'b tracing_subscriber::registry::SpanRef<'a, R>,
+    fn span_stop<'a, 'b>(
+        self: Pin<&Self>,
         start_stop_times: (std::time::SystemTime, std::time::SystemTime),
-        activity_id: &[u8; 16],
-        related_activity_id: &[u8; 16],
-        fields: &'b [crate::values::span_values::FieldValueIndex],
-        level: &tracing_core::Level,
+        data: crate::layer::common::SpanRef,
         keyword: u64,
         event_tag: u32,
-    ) where
-        R: tracing_subscriber::registry::LookupSpan<'a>;
+    );
 
     #[allow(clippy::too_many_arguments)]
     fn write_record(
-        self: std::pin::Pin<&Self>,
+        self: Pin<&Self>,
         timestamp: std::time::SystemTime,
         current_span: u64,
         parent_span: u64,

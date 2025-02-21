@@ -16,7 +16,6 @@ use std::{
     sync::Arc,
     time::SystemTime,
 };
-use tracing_subscriber::registry::{LookupSpan, SpanRef};
 
 pub(crate) type ProviderGroupType = std::borrow::Cow<'static, str>;
 
@@ -194,25 +193,18 @@ impl<OutMode: OutputMode> Provider<OutMode> {
 }
 
 impl<Mode: OutputMode> super::EventWriter<NormalOutput> for Provider<Mode> {
-    fn span_start<'a, 'b, R>(
+    fn span_start<'a, 'b>(
         self: Pin<&Self>,
-        span: &'b SpanRef<'a, R>,
-        timestamp: SystemTime,
-        activity_id: &[u8; 16],
-        related_activity_id: &[u8; 16],
-        fields: &'b [crate::values::span_values::FieldValueIndex],
-        level: &tracing_core::Level,
+        data: crate::layer::common::SpanRef,
         keyword: u64,
         event_tag: u32,
-    ) where
-        R: LookupSpan<'a>,
-    {
-        let span_name = span.name();
+    ) {
+        let span_name = data.name();
 
-        let es = if let Some(es) = self.find_set(Self::map_level(level), keyword) {
+        let es = if let Some(es) = self.find_set(Self::map_level(&data.level()), keyword) {
             es
         } else {
-            self.register_set(Self::map_level(level), keyword)
+            self.register_set(Self::map_level(&data.level()), keyword)
         };
 
         EBW.with(|eb| {
@@ -223,7 +215,7 @@ impl<Mode: OutputMode> super::EventWriter<NormalOutput> for Provider<Mode> {
 
             eb.add_value(
                 "start time",
-                timestamp
+                data.timestamp()
                     .duration_since(std::time::SystemTime::UNIX_EPOCH)
                     .unwrap()
                     .as_secs(),
@@ -231,7 +223,7 @@ impl<Mode: OutputMode> super::EventWriter<NormalOutput> for Provider<Mode> {
                 0,
             );
 
-            for f in fields {
+            for f in data.fields() {
                 <&mut EventBuilder as AddFieldAndValue>::add_field_value(
                     &mut eb.deref_mut(),
                     &FieldAndValue {
@@ -243,13 +235,13 @@ impl<Mode: OutputMode> super::EventWriter<NormalOutput> for Provider<Mode> {
 
             let _ = eb.write(
                 &es,
-                if activity_id[0] != 0 {
-                    Some(activity_id)
+                if data.activity_id()[0] != 0 {
+                    Some(data.activity_id())
                 } else {
                     None
                 },
-                if related_activity_id[0] != 0 {
-                    Some(related_activity_id)
+                if data.related_activity_id()[0] != 0 {
+                    Some(data.related_activity_id())
                 } else {
                     None
                 },
@@ -257,25 +249,19 @@ impl<Mode: OutputMode> super::EventWriter<NormalOutput> for Provider<Mode> {
         });
     }
 
-    fn span_stop<'a, 'b, R>(
+    fn span_stop<'a, 'b>(
         self: Pin<&Self>,
-        span: &'b SpanRef<'a, R>,
         start_stop_times: (std::time::SystemTime, std::time::SystemTime),
-        activity_id: &[u8; 16],
-        related_activity_id: &[u8; 16],
-        fields: &'b [crate::values::span_values::FieldValueIndex],
-        level: &tracing_core::Level,
+        data: crate::layer::common::SpanRef,
         keyword: u64,
         event_tag: u32,
-    ) where
-        R: LookupSpan<'a>,
-    {
-        let span_name = span.name();
+    ) {
+        let span_name = data.name();
 
-        let es = if let Some(es) = self.find_set(Self::map_level(level), keyword) {
+        let es = if let Some(es) = self.find_set(Self::map_level(&data.level()), keyword) {
             es
         } else {
-            self.register_set(Self::map_level(level), keyword)
+            self.register_set(Self::map_level(&data.level()), keyword)
         };
 
         EBW.with(|eb| {
@@ -295,7 +281,7 @@ impl<Mode: OutputMode> super::EventWriter<NormalOutput> for Provider<Mode> {
                 0,
             );
 
-            for f in fields {
+            for f in data.fields() {
                 <&mut EventBuilder as AddFieldAndValue>::add_field_value(
                     &mut eb.deref_mut(),
                     &FieldAndValue {
@@ -307,13 +293,13 @@ impl<Mode: OutputMode> super::EventWriter<NormalOutput> for Provider<Mode> {
 
             let _ = eb.write(
                 &es,
-                if activity_id[0] != 0 {
-                    Some(activity_id)
+                if data.activity_id()[0] != 0 {
+                    Some(data.activity_id())
                 } else {
                     None
                 },
-                if related_activity_id[0] != 0 {
-                    Some(related_activity_id)
+                if data.related_activity_id()[0] != 0 {
+                    Some(data.related_activity_id())
                 } else {
                     None
                 },
@@ -424,47 +410,34 @@ impl AddFieldAndValue for CommonSchemaPartCBuilder<'_> {
 }
 
 impl<Mode: OutputMode> super::EventWriter<CommonSchemaOutput> for Provider<Mode> {
-    fn span_start<'a, 'b, R>(
+    fn span_start<'a, 'b>(
         self: Pin<&Self>,
-        _span: &'b SpanRef<'a, R>,
-        _timestamp: SystemTime,
-        _activity_id: &[u8; 16],
-        _related_activity_id: &[u8; 16],
-        _fields: &'b [crate::values::span_values::FieldValueIndex],
-        _level: &tracing_core::Level,
+        _data: crate::layer::common::SpanRef,
         _keyword: u64,
         _event_tag: u32,
-    ) where
-        R: LookupSpan<'a>,
-    {
+    ) {
     }
 
-    fn span_stop<'a, 'b, R>(
+    fn span_stop<'a, 'b>(
         self: Pin<&Self>,
-        span: &'b SpanRef<'a, R>,
         start_stop_times: (std::time::SystemTime, std::time::SystemTime),
-        _activity_id: &[u8; 16],
-        _related_activity_id: &[u8; 16],
-        fields: &'b [crate::values::span_values::FieldValueIndex],
-        level: &tracing_core::Level,
+        data: crate::layer::common::SpanRef,
         keyword: u64,
         event_tag: u32,
-    ) where
-        R: LookupSpan<'a>,
-    {
-        let span_name = span.name();
+    ) {
+        let span_name = data.name();
 
         let span_id = unsafe {
             let mut span_id = MaybeUninit::<[u8; 16]>::uninit();
             let mut cur = Cursor::new((*span_id.as_mut_ptr()).as_mut_slice());
-            write!(&mut cur, "{:16x}", span.id().into_u64()).expect("!write");
+            write!(&mut cur, "{:16x}", data.id()).expect("!write");
             span_id.assume_init()
         };
 
-        let es = if let Some(es) = self.find_set(Self::map_level(level), keyword) {
+        let es = if let Some(es) = self.find_set(Self::map_level(&data.level()), keyword) {
             es
         } else {
-            self.register_set(Self::map_level(level), keyword)
+            self.register_set(Self::map_level(&data.level()), keyword)
         };
 
         EBW.with(|eb| {
@@ -533,13 +506,13 @@ impl<Mode: OutputMode> super::EventWriter<CommonSchemaOutput> for Provider<Mode>
                 );
             }
 
-            let partc_field_count = span.fields().len() as u8;
+            let partc_field_count = data.field_count() as u8;
 
             eb.add_struct("PartC", partc_field_count, 0);
             {
                 let mut pfv = CommonSchemaPartCBuilder { eb: eb.deref_mut() };
 
-                for f in fields {
+                for f in data.fields() {
                     <CommonSchemaPartCBuilder<'_> as AddFieldAndValue>::add_field_value(
                         &mut pfv,
                         &FieldAndValue {

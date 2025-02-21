@@ -28,7 +28,7 @@ extern "C" {
     pub(crate) static _stop__etw_kw: usize;
 }
 
-#[link_section = "_etw_kw"]
+#[unsafe(link_section = "_etw_kw")]
 #[used]
 static mut ETW_META_PTR: *const crate::_details::EventMetadata = core::ptr::null();
 

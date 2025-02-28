@@ -16,10 +16,10 @@ use tracing_subscriber::registry::{LookupSpan, SpanRef};
 // Items within this .rdata section will be sorted alphabetically, thus the start is named with "0", the end "9", and each metadata "5".
 // If these statics aren't mut then everything will silently fail to work.
 #[allow(non_upper_case_globals)]
-#[link_section = ".rdata$zRSETW0"]
+#[unsafe(link_section = ".rdata$zRSETW0")]
 pub(crate) static mut _start__etw_kw: usize = 0;
 #[allow(non_upper_case_globals)]
-#[link_section = ".rdata$zRSETW9"]
+#[unsafe(link_section = ".rdata$zRSETW9")]
 pub(crate) static mut _stop__etw_kw: usize = 0;
 
 pub(crate) type ProviderGroupType = crate::native::native_guid;
@@ -71,7 +71,7 @@ impl AddFieldAndValue for &'_ mut tracelogging_dynamic::EventBuilder {
             ValueTypes::v_bool(b) => {
                 self.add_bool32(fv.field_name, *b as i32, OutType::Default, 0);
             }
-            ValueTypes::v_str(ref s) => {
+            ValueTypes::v_str(s) => {
                 self.add_str8(fv.field_name, s.as_ref(), OutType::Utf8, 0);
             }
             ValueTypes::v_char(c) => {

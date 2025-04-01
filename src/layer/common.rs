@@ -1,6 +1,6 @@
 use std::{hash::{Hash, Hasher, BuildHasher}, sync::RwLock, time::SystemTime};
 
-use core::pin::Pin;
+use core::{num::NonZeroU64, pin::Pin};
 
 use hashbrown::HashMap;
 use hashers::fnv::FNV1aHasher64;
@@ -41,23 +41,30 @@ impl BuildHasher for FNV1aHasher64HasherBuilder {
     }
 }
 
+// Data created by this crate for a span
 struct SpanData {
     fields: Box<[FieldValueIndex]>,
     activity_id: [u8; 16], // if set, byte 0 is 1 and 64-bit span ID in the lower 8 bytes
-    related_activity_id: [u8; 16], // if set, byte 0 is 1 and 64-bit span ID in the lower 8 bytes
+    related_activity_id: [u8; 16], // if set, byte 0 is 1 and 64-bit parent span ID in the lower 8 bytes
     start_time: SystemTime,
     name: &'static str,
+    parent_id: Option<NonZeroU64>, // sizeof(Option<NonZeroU64>) == sizeof(u64) is guaranteed by the standard
     level: tracing_core::Level,
 }
 
+// Data crated by tracing_core for a span, plus the crate data
 pub struct SpanRef<'a> { // TODO: Sealed
-    id: &'a tracing_core::span::Id,
+    id: NonZeroU64,
     data: &'a SpanData,
 }
 
 impl<'a> SpanRef<'a> {
     pub(crate) fn id(&self) -> u64 {
-        self.id.into_u64()
+        self.id.into()
+    }
+
+    pub(crate) fn parent(&self) -> Option<u64> {
+        self.data.parent_id.map(|id| id.into())
     }
 
     pub(crate) fn name(&self) -> &'static str {
@@ -72,12 +79,14 @@ impl<'a> SpanRef<'a> {
         self.data.start_time
     }
 
+    // LE bytes rather than a GUID so we don't need a dependency on a GUID type
     // if set, byte 0 is 1 and 64-bit span ID in the lower 8 bytes
     pub(crate) fn activity_id(&self) -> &[u8; 16] {
         &self.data.activity_id
     }
 
-    // if set, byte 0 is 1 and 64-bit span ID in the lower 8 bytes
+    // LE bytes rather than a GUID so we don't need a dependency on a GUID type
+    // if set, byte 0 is 1 and 64-bit parent span ID in the lower 8 bytes
     pub(crate) fn related_activity_id(&self) -> &[u8; 16] {
         &self.data.related_activity_id
     }
@@ -136,6 +145,7 @@ pub(crate) fn create_span_data_for_new_span(
             related_activity_id: *GLOBAL_ACTIVITY_SEED,
             start_time: SystemTime::UNIX_EPOCH,
             name: metadata.name(),
+            parent_id: NonZeroU64::new(parent_span_id),
             level: *metadata.level(),
         }
     };
@@ -195,7 +205,7 @@ pub(crate) fn enter_span<OutMode: OutputMode>(
     data.start_time = timestamp;
 
     writer.span_start(
-        SpanRef{ id: &id, data: &data },
+        SpanRef{ id: id.into_non_zero_u64(), data: &data },
         keyword,
         tag,
     );
@@ -219,7 +229,7 @@ pub(crate) fn exit_span<OutMode: OutputMode>(
 
     writer.span_stop(
         (data.start_time, stop_timestamp),
-        SpanRef{ id: &id, data: &data },
+        SpanRef{ id: id.into_non_zero_u64(), data: &data },
         keyword,
         tag,
     );

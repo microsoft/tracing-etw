@@ -386,6 +386,7 @@ impl<Mode: OutputMode> super::EventWriter<CommonSchemaOutput> for Provider<Mode>
         keyword: u64,
         event_tag: u32,
     ) {
+        // We need a UTF-8 rather than raw bytes, so we can't use data.activity_id() here
         let span_id = unsafe {
             let mut span_id = MaybeUninit::<[u8; 16]>::uninit();
             let mut cur = Cursor::new((*span_id.as_mut_ptr()).as_mut_slice());
@@ -429,20 +430,18 @@ impl<Mode: OutputMode> super::EventWriter<CommonSchemaOutput> for Provider<Mode>
             //     }
             // }
 
-            let span_parent = data.related_activity_id();
-
-            let partb_field_count = 3 + span_parent[0];
+            let parent_span = data.parent();
+            let partb_field_count = 3 + if parent_span.is_some() { 1 } else { 0 };
 
             eb.add_struct("PartB", partb_field_count, 0);
             {
                 eb.add_str8("_typeName", "Span", OutType::Utf8, 0);
 
-                if span_parent[0] == 1 {
+                if parent_span.is_some() {
                     let parent_span_id = unsafe {
                         let mut span_id = MaybeUninit::<[u8; 16]>::uninit();
                         let mut cur = Cursor::new((*span_id.as_mut_ptr()).as_mut_slice());
-                        let (_, value) = span_parent.split_at(8).try_into().unwrap();
-                        write!(&mut cur, "{:16x}", u64::from_le_bytes(value.try_into().unwrap())).expect("!write");
+                        write!(&mut cur, "{:16x}", parent_span.unwrap_unchecked()).expect("!write");
                         span_id.assume_init()
                     };
 

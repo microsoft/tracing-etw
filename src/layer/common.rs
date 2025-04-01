@@ -50,7 +50,7 @@ struct SpanData {
     level: tracing_core::Level,
 }
 
-pub(crate) struct SpanRef<'a> {
+pub struct SpanRef<'a> { // TODO: Sealed
     id: &'a tracing_core::span::Id,
     data: &'a SpanData,
 }

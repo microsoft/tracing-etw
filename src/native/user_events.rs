@@ -476,18 +476,20 @@ impl<Mode: OutputMode> super::EventWriter<CommonSchemaOutput> for Provider<Mode>
             //     }
             // }
 
-            let span_parent = span.parent();
-            let partb_field_count = 3 + if span_parent.is_some() { 1 } else { 0 };
+            let span_parent = data.related_activity_id();
+
+            let partb_field_count = 3 + span_parent[0];
 
             eb.add_struct("PartB", partb_field_count, 0);
             {
                 eb.add_str("_typeName", "Span", FieldFormat::Default, 0);
 
-                if let Some(parent) = span_parent {
+                if span_parent[0] == 1 {
                     let parent_span_id = unsafe {
                         let mut span_id = MaybeUninit::<[u8; 16]>::uninit();
                         let mut cur = Cursor::new((*span_id.as_mut_ptr()).as_mut_slice());
-                        write!(&mut cur, "{:16x}", parent.id().into_u64()).expect("!write");
+                        let (_, value) = span_parent.split_at(8).try_into().unwrap();
+                        write!(&mut cur, "{:16x}", u64::from_le_bytes(value.try_into().unwrap())).expect("!write");
                         span_id.assume_init()
                     };
 

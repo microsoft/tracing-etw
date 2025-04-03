@@ -77,7 +77,7 @@ where
     }
 
     fn on_close(&self, id: span::Id, _ctx: tracing_subscriber::layer::Context<'_, S>) {
-        common::close_and_drop_span(&id)
+        let _ = common::release_span(&id);
     }
 
     fn on_record(

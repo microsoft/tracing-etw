@@ -95,18 +95,19 @@ impl GuidWrapper {
 mod private {
     #[doc(hidden)]
     pub trait Sealed {}
+    pub struct SealedStruct;
 }
 
 #[doc(hidden)]
 pub trait OutputMode: private::Sealed {}
 
 #[doc(hidden)]
-pub struct NormalOutput;
+pub struct NormalOutput(private::SealedStruct);
 impl private::Sealed for NormalOutput {}
 impl OutputMode for NormalOutput {}
 
 #[doc(hidden)]
-pub struct CommonSchemaOutput;
+pub struct CommonSchemaOutput(private::SealedStruct);
 impl private::Sealed for CommonSchemaOutput {}
 impl OutputMode for CommonSchemaOutput {}
 

@@ -60,17 +60,12 @@ where
     }
 
     fn clone_span(&self, id: &tracing_core::span::Id) -> tracing_core::span::Id {
-        // TODO increment refcount
+        common::addref_span(id);
         id.clone()
     }
 
-    fn try_close(&self, _id: tracing_core::span::Id) -> bool {
-        // TODO decrement refcount
-        false
-
-        // if refcount == 0 {
-        //     common::close_and_drop_span(&id);
-        // }
+    fn try_close(&self, id: tracing_core::span::Id) -> bool {
+        common::release_span(&id)
     }
 
     fn record(&self, id: &tracing_core::span::Id, values: &tracing_core::span::Record<'_>) {

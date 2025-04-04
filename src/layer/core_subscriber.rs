@@ -36,14 +36,7 @@ where
 
     // Only called if register_callsite returned Interest::sometimes
     fn enabled(&self, metadata: &tracing::Metadata<'_>) -> bool {
-        let etw_meta = get_event_metadata(&metadata.callsite());
-        let keyword = if let Some(meta) = etw_meta {
-            meta.kw
-        } else {
-            self.default_keyword
-        };
-
-        self.provider.enabled(metadata.level(), keyword)
+        self.is_enabled(&metadata.callsite(), metadata.level())
     }
 
     fn new_span(&self, attrs: &tracing_core::span::Attributes<'_>) -> tracing_core::span::Id {

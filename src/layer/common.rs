@@ -1,6 +1,7 @@
-use std::{hash::{Hash, Hasher, BuildHasher}, sync::RwLock, time::SystemTime};
-
-use core::{num::NonZeroU64, pin::Pin, sync::atomic::{AtomicUsize, Ordering}};
+use core::{hash::{Hash, Hasher, BuildHasher}, num::NonZeroU64, pin::Pin, sync::atomic::{AtomicUsize, Ordering}};
+extern crate alloc;
+use alloc::{boxed::Box, vec::Vec};
+use std::{sync::RwLock, time::SystemTime};
 
 use hashbrown::HashMap;
 use hashers::fnv::FNV1aHasher64;
@@ -179,6 +180,7 @@ pub(crate) fn create_span_data_for_new_span(
     SPAN_DATA.write().unwrap().insert(id.clone(), data);
 }
 
+#[allow(unused)]
 pub(crate) fn addref_span(id: &tracing::span::Id) {
     let span_data_guard = SPAN_DATA.read().unwrap();
     let spandata = span_data_guard.get(id);

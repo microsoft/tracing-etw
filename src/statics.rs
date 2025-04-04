@@ -1,10 +1,13 @@
 // Module for static variables that are used by the crate.
 
-use std::{cmp, hash::BuildHasher, iter::FusedIterator, sync::LazyLock};
+use std::sync::LazyLock;
+use core::{hash::BuildHasher, cmp, iter::FusedIterator};
+extern crate alloc;
+use alloc::{boxed::Box, vec::Vec};
 
 use crate::_details::{EventMetadata, ParsedEventMetadata};
 
-type FnvHasher = std::hash::BuildHasherDefault<hashers::fnv::FNV1aHasher64>;
+type FnvHasher = core::hash::BuildHasherDefault<hashers::fnv::FNV1aHasher64>;
 
 pub(crate) static GLOBAL_ACTIVITY_SEED: LazyLock<[u8; 16]> = LazyLock::new(|| {
     let now = std::time::SystemTime::now()
@@ -125,7 +128,7 @@ impl core::cmp::PartialOrd for ParsedEventMetadata {
 
 // Order by hash only
 impl core::cmp::Ord for ParsedEventMetadata {
-    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
+    fn cmp(&self, other: &Self) -> cmp::Ordering {
         self.identity_hash.cmp(&other.identity_hash)
     }
 }

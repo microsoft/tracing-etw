@@ -1,24 +1,26 @@
 [package]
 name = "tracing-etw"
 version = "0.2.1"
-edition = "2021"
+edition = "2024"
 resolver = "2"
 license = "MIT"
 repository = "https://github.com/microsoft/tracing-etw"
-rust-version = "1.82"
+rust-version = "1.85"
 authors = ["Kyle Sabo", "Microsoft"]
 description = "ETW or Linux user_events output for tokio-tracing"
 
 [lib]
 crate-type = ["rlib"]
+doctest = false
 
 [features]
-global_filter = []
+default = ["std"]
+std = ["tracing-subscriber/registry", "tracing/std"]
 
 [dependencies]
 tracing = {version = "0.1", default-features = false}
 tracing-core = {version = "0.1", default-features = false}
-tracing-subscriber = {version="0.3", default-features = false, features=["registry"]}
+tracing-subscriber = {version="0.3", default-features = false, optional = true}
 chrono = {version="0.4", default-features = false, features=["std"]}
 paste = "1"
 thiserror = {version="2", default-features = false}
@@ -45,10 +47,39 @@ windows = {version="0.58", features=["Win32_System_Diagnostics_Etw", "Win32_Foun
 [[bench]]
 name = "etw"
 harness = false
+required-features = ["std"]
 
 [[bench]]
 name = "user_events"
 harness = false
+required-features = ["std"]
+
+[[example]]
+name = "basic"
+required-features = ["std"]
+
+[[example]]
+name = "etw_event"
+required-features = ["std"]
+
+[[example]]
+name = "instrument"
+required-features = ["std"]
+
+[[example]]
+name = "span"
+required-features = ["std"]
+
+[[example]]
+name = "stress"
+required-features = ["std"]
+
+[[test]]
+name = "core_spans"
+
+[[test]]
+name = "registry_spans"
+required-features = ["std"]
 
 [package.metadata.docs.rs]
 all-features = true

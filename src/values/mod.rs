@@ -1,7 +1,8 @@
 pub(crate) mod event_values;
 pub(crate) mod span_values;
 
-use std::borrow::Cow;
+extern crate alloc;
+use alloc::{borrow::Cow, string::String};
 
 #[allow(non_camel_case_types, dead_code)]
 #[derive(Default, Clone)]

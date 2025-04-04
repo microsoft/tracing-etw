@@ -183,6 +183,8 @@
 // the `docsrs` configuration attribute is defined
 #![cfg_attr(docsrs, feature(doc_cfg))]
 
+#![cfg_attr(not(feature = "std"), no_std)]
+
 mod layer_builder;
 // Module that abstracts the native ETW and Linux user_events APIs, depending on the target platform.
 // Consumers of the crate should not need to use this module directly.

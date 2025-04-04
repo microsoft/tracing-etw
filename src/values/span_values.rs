@@ -1,4 +1,6 @@
-use std::fmt::Write;
+use core::fmt::Write;
+extern crate alloc;
+use alloc::string::{String, ToString};
 
 use tracing::field;
 
@@ -32,7 +34,7 @@ impl SpanValueVisitor<'_> {
 }
 
 impl field::Visit for SpanValueVisitor<'_> {
-    fn record_debug(&mut self, field: &field::Field, value: &dyn std::fmt::Debug) {
+    fn record_debug(&mut self, field: &field::Field, value: &dyn core::fmt::Debug) {
         let mut string = String::with_capacity(10); // Just a guess
         if write!(string, "{:?}", value).is_err() {
             return;
@@ -72,5 +74,6 @@ impl field::Visit for SpanValueVisitor<'_> {
         );
     }
 
+    #[cfg(feature = "std")]
     fn record_error(&mut self, _field: &field::Field, _value: &(dyn std::error::Error + 'static)) {}
 }

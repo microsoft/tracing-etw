@@ -1,21 +1,18 @@
+use core::{cell::RefCell, marker::PhantomData, mem::MaybeUninit, ops::DerefMut, pin::Pin};
+extern crate alloc;
+use alloc::{string::String, sync::Arc};
+use std::io::{Cursor, Write};
+
+use chrono::{Datelike, Timelike};
+use tracelogging::*;
+use tracelogging_dynamic::EventBuilder;
+
 use crate::{
     error::EtwError,
     native::{CommonSchemaOutput, NormalOutput, OutputMode},
     statics::GLOBAL_ACTIVITY_SEED,
     values::{event_values::*, *},
 };
-
-use core::{cell::RefCell, marker::PhantomData, mem::MaybeUninit, ops::DerefMut, pin::Pin};
-// TODO: no_std
-use std::{
-    io::{Cursor, Write},
-    sync::Arc,
-    time::SystemTime,
-};
-
-use chrono::{Datelike, Timelike};
-use tracelogging::*;
-use tracelogging_dynamic::EventBuilder;
 
 // Items within this .rdata section will be sorted alphabetically, thus the start is named with "0", the end "9", and each metadata "5".
 // If these statics aren't mut then everything will silently fail to work.
@@ -28,7 +25,7 @@ pub(crate) static mut _stop__etw_kw: usize = 0;
 
 pub(crate) type ProviderGroupType = crate::native::native_guid;
 
-thread_local! {static EBW: std::cell::RefCell<EventBuilder>  = RefCell::new(EventBuilder::new());}
+thread_local! {static EBW: RefCell<EventBuilder>  = RefCell::new(EventBuilder::new());}
 
 struct Win32SystemTime {
     st: [u16; 8],
@@ -278,7 +275,7 @@ impl<Mode: OutputMode> super::EventWriter<NormalOutput> for Provider<Mode> {
 
     fn write_record(
         self: Pin<&Self>,
-        timestamp: SystemTime,
+        timestamp: std::time::SystemTime,
         current_span: u64,
         parent_span: u64,
         event_name: &str,
@@ -483,7 +480,7 @@ impl<Mode: OutputMode> super::EventWriter<CommonSchemaOutput> for Provider<Mode>
 
     fn write_record(
         self: Pin<&Self>,
-        timestamp: SystemTime,
+        timestamp: std::time::SystemTime,
         current_span: u64,
         _parent_span: u64,
         event_name: &str,

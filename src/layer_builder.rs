@@ -1,21 +1,24 @@
-use std::marker::PhantomData;
-#[allow(unused_imports)]
-use std::{pin::Pin, sync::Arc};
+use core::marker::PhantomData;
+extern crate alloc;
+use alloc::{boxed::Box, string::ToString};
 
 #[allow(unused_imports)] // Many imports are used exclusively by feature-gated code
 use tracing::metadata::LevelFilter;
+#[cfg(any(feature = "std", docsrs))]
 use tracing::Subscriber;
+#[cfg(any(feature = "std", docsrs))]
 #[allow(unused_imports)]
-use tracing_subscriber::filter::{combinator::And, FilterExt, Filtered, Targets};
-use tracing_subscriber::registry::LookupSpan;
-#[allow(unused_imports)]
-use tracing_subscriber::{layer::Filter, Layer};
+use tracing_subscriber::{
+    filter::{combinator::And, FilterExt, Filtered, Targets},
+    registry::LookupSpan,
+    layer::{Filter, Layer}
+};
+
+use crate::layer::_EtwTracingSubscriber;
 
 use crate::error::EtwError;
-#[cfg(any(not(feature = "global_filter"), docsrs))]
+#[cfg(any(feature = "std", docsrs))]
 use crate::layer::registry_subscriber::EtwFilter;
-#[cfg(any(feature = "registry", docsrs))]
-use crate::layer::registry_subscriber::EtwLayer;
 use crate::native::{
     CommonSchemaOutput, EventWriter, GuidWrapper, NormalOutput, OutputMode, ProviderTraits,
 };
@@ -205,7 +208,7 @@ impl<OutMode: OutputMode + 'static> LayerBuilder<OutMode> {
         })
     }
 
-    #[cfg(any(not(feature = "global_filter"), docsrs))]
+    #[cfg(any(feature = "std", docsrs))]
     fn build_target_filter(&self, target: &'static str) -> Targets {
         let mut targets = Targets::new().with_target(&*self.provider_name, LevelFilter::TRACE);
 
@@ -216,46 +219,21 @@ impl<OutMode: OutputMode + 'static> LayerBuilder<OutMode> {
         targets
     }
 
-    // Builds a layer without any enable checks, unless global_filter is enabled
-    fn build_layer<S>(&self) -> EtwLayer<S, OutMode>
-    where
-        S: Subscriber + for<'a> LookupSpan<'a>,
-        crate::native::Provider<OutMode>: ProviderTraits + EventWriter<OutMode>,
-    {
-        EtwLayer::<S, OutMode> {
-            provider: crate::native::Provider::<OutMode>::new(
-                &self.provider_name,
-                &self.provider_id,
-                &self.provider_group,
-                self.default_keyword,
-            ),
-            default_keyword: self.default_keyword,
-            _p: PhantomData,
-        }
-    }
-
     // The filter is responsible for the enabled checks for the layer
-    #[cfg(any(not(feature = "global_filter"), docsrs))]
-    fn build_filter<S>(&self, layer: EtwLayer<S, OutMode>) -> EtwFilter<S, OutMode>
+    #[cfg(any(feature = "std", docsrs))]
+    fn build_filter<S>(&self, layer: _EtwTracingSubscriber<OutMode, S>) -> EtwFilter<S, OutMode>
     where
         S: Subscriber + for<'a> LookupSpan<'a>,
     {
         EtwFilter::<S, OutMode> { layer }
     }
 
-    #[cfg_attr(docsrs, doc(cfg(feature = "global_filter")))]
-    #[cfg(any(feature = "global_filter", docsrs))]
-    pub fn build_global_filter<S>(self) -> Result<EtwLayer<S, OutMode>, EtwError>
-    where
-        S: Subscriber + for<'a> LookupSpan<'a>,
-        crate::native::Provider<OutMode>: ProviderTraits + EventWriter<OutMode>,
-    {
-        self.validate_config()?;
-
-        Ok(self.build_layer())
-    }
-
+    /// Constructs a [tracing_subscriber::Layer] implementation.
     ///
+    /// This layer includes a [tracing_subscriber::Filter] that reports to `tracing` when
+    /// an event is enabled to a ETW/user_events collector. Disabled events can then be more
+    /// efficiently skipped over.
+    /// 
     /// ```
     /// # use tracing_subscriber::prelude::*;
     /// # let reg = tracing_subscriber::registry();
@@ -265,22 +243,93 @@ impl<OutMode: OutputMode + 'static> LayerBuilder<OutMode> {
     /// ```
     ///
     #[allow(clippy::type_complexity)]
-    #[cfg_attr(docsrs, doc(cfg(not(feature = "global_filter"))))]
-    #[cfg(any(not(feature = "global_filter"), docsrs))]
-    pub fn build<S>(
+    #[cfg_attr(docsrs, doc(cfg(feature = "std")))]
+    #[cfg(any(feature = "std", docsrs))]
+    pub fn build_layer<S>(
         self,
-    ) -> Result<Filtered<EtwLayer<S, OutMode>, EtwFilter<S, OutMode>, S>, EtwError>
+    ) -> Result<Filtered<_EtwTracingSubscriber<OutMode, S>, EtwFilter<S, OutMode>, S>, EtwError>
     where
         S: Subscriber + for<'a> LookupSpan<'a>,
         crate::native::Provider<OutMode>: ProviderTraits + EventWriter<OutMode>,
     {
         self.validate_config()?;
 
-        let layer = self.build_layer();
+        let layer = _EtwTracingSubscriber::<OutMode, S> {
+            provider: crate::native::Provider::<OutMode>::new(
+                &self.provider_name,
+                &self.provider_id,
+                &self.provider_group,
+                self.default_keyword,
+            ),
+            default_keyword: self.default_keyword,
+            _p: PhantomData
+        };
 
         let filter = self.build_filter(layer.clone());
 
         Ok(layer.with_filter(filter))
+    }
+
+    /// Constructs a [tracing_core::Subscriber] implementation.
+    /// Prefer [self::build_layer] instead; this should only be used in no_std environments
+    /// or when `tracing_subscriber::Registry` cannot be used.
+    /// 
+    /// This subscriber does not implement any callsite enablement filtering, meaning
+    /// events that are not enabled by ETW/user_events are still considered to be enabled
+    /// by `tracing`. For more efficient processing of disabled events, use [self::build_layer]
+    /// to construct a [tracing_subscriber::Layer] that includes per-layer filtering support.
+    /// 
+    /// ```
+    /// let built_layer = tracing_etw::LayerBuilder::new("SampleProviderName").build();
+    /// assert!(built_layer.is_ok());
+    /// # let dispatch = tracing_core::Dispatch::new(layer);
+    /// # tracing_core::dispatcher::set_global_default(dispatch).expect("Set dispatcher");
+    /// ```
+    ///
+    #[allow(clippy::type_complexity)]
+    pub fn build_subscriber(
+        self,
+    ) -> Result<_EtwTracingSubscriber<OutMode>, EtwError>
+    where
+        crate::native::Provider<OutMode>: ProviderTraits + EventWriter<OutMode>,
+    {
+        self.validate_config()?;
+
+        Ok(_EtwTracingSubscriber {
+            provider: crate::native::Provider::<OutMode>::new(
+                &self.provider_name,
+                &self.provider_id,
+                &self.provider_group,
+                self.default_keyword,
+            ),
+            default_keyword: self.default_keyword,
+            _p: PhantomData
+        })
+    }
+
+    #[allow(clippy::type_complexity)]
+    #[cfg_attr(docsrs, doc(cfg(not(feature = "std"))))]
+    #[cfg(any(not(feature = "std"), docsrs))]
+    pub fn build(
+        self,
+    ) -> Result<_EtwTracingSubscriber<OutMode>, EtwError>
+    where
+        crate::native::Provider<OutMode>: ProviderTraits + EventWriter<OutMode>,
+    {
+        self.build_subscriber()
+    }
+
+    #[allow(clippy::type_complexity)]
+    #[cfg_attr(docsrs, doc(cfg(feature = "std")))]
+    #[cfg(any(feature = "std", docsrs))]
+    pub fn build<S>(
+        self,
+    ) -> Result<Filtered<_EtwTracingSubscriber<OutMode, S>, EtwFilter<S, OutMode>, S>, EtwError>
+    where
+        S: Subscriber + for<'a> LookupSpan<'a>,
+        crate::native::Provider<OutMode>: ProviderTraits + EventWriter<OutMode>,
+    {
+        self.build_layer()
     }
 
     /// Constructs the configured layer with a target [tracing_subscriber::filter] applied.
@@ -305,19 +354,28 @@ impl<OutMode: OutputMode + 'static> LayerBuilder<OutMode> {
     /// ```
     ///
     #[allow(clippy::type_complexity)]
-    #[cfg_attr(docsrs, doc(cfg(not(feature = "global_filter"))))]
-    #[cfg(any(not(feature = "global_filter"), docsrs))]
+    #[cfg_attr(docsrs, doc(cfg(feature = "std")))]
+    #[cfg(any(feature = "std", docsrs))]
     pub fn build_with_target<S>(
         self,
         target: &'static str,
-    ) -> Result<Filtered<EtwLayer<S, OutMode>, And<EtwFilter<S, OutMode>, Targets, S>, S>, EtwError>
+    ) -> Result<Filtered<_EtwTracingSubscriber<OutMode, S>, And<EtwFilter<S, OutMode>, Targets, S>, S>, EtwError>
     where
         S: Subscriber + for<'a> LookupSpan<'a>,
         crate::native::Provider<OutMode>: ProviderTraits + EventWriter<OutMode>,
     {
         self.validate_config()?;
 
-        let layer = self.build_layer();
+        let layer = _EtwTracingSubscriber::<OutMode, S> {
+            provider: crate::native::Provider::<OutMode>::new(
+                &self.provider_name,
+                &self.provider_id,
+                &self.provider_group,
+                self.default_keyword,
+            ),
+            default_keyword: self.default_keyword,
+            _p: PhantomData
+        };
 
         let filter = self.build_filter(layer.clone());
 
@@ -326,17 +384,33 @@ impl<OutMode: OutputMode + 'static> LayerBuilder<OutMode> {
         Ok(layer.with_filter(filter.and(targets)))
     }
 
-    // Private. For integration tests only. Skips adding enablement checks. Serves
-    // absolutely no purposes outside of making testing easier.
+    // Private. For integration tests only. Builds a layer implemention without a filter.
+    // Serves absolutely no purposes outside of making testing easier.
     #[doc(hidden)]
-    pub fn __build_for_test<S>(self) -> Result<EtwLayer<S, OutMode>, EtwError>
+    #[allow(clippy::type_complexity)]
+    #[cfg_attr(docsrs, doc(cfg(feature = "std")))]
+    #[cfg(any(feature = "std", docsrs))]
+    pub fn __build_for_test<S>(self) -> Result<_EtwTracingSubscriber<OutMode, S>, EtwError>
     where
         S: Subscriber + for<'a> LookupSpan<'a>,
         crate::native::Provider<OutMode>: ProviderTraits + EventWriter<OutMode>,
     {
+        self.validate_config()?;
+
+        let layer = _EtwTracingSubscriber::<OutMode, S> {
+            provider: crate::native::Provider::<OutMode>::new(
+                &self.provider_name,
+                &self.provider_id,
+                &self.provider_group,
+                self.default_keyword,
+            ),
+            default_keyword: self.default_keyword,
+            _p: PhantomData
+        };
+
         // By skipping the adding the filter, we can avoid the enablement checks and
         // ensure the code is actually being run and writing an event, without needing
         // to set up an external listener.
-        Ok(self.build_layer())
+        Ok(layer)
     }
 }

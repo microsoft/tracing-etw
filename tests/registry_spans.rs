@@ -1,9 +1,11 @@
+#![cfg(feature = "std")]
+
 use tracing::{error_span, event, span, Level};
 use tracing_etw::LayerBuilder;
 use tracing_subscriber::{self, fmt::format::FmtSpan, prelude::*};
 
 #[test]
-fn span_test_1() {
+fn registry_span_test_1() {
     tracing_subscriber::registry()
         .with(LayerBuilder::new("SpanTests").__build_for_test().unwrap())
         .with(tracing_subscriber::fmt::layer().with_span_events(FmtSpan::ACTIVE))

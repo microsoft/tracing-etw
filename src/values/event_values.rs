@@ -1,4 +1,6 @@
-use std::fmt::Write;
+use core::fmt::Write;
+extern crate alloc;
+use alloc::string::{String, ToString};
 
 use tracing::field;
 
@@ -22,7 +24,7 @@ impl<T: AddFieldAndValue> From<T> for EventBuilderVisitorWrapper<T> {
 }
 
 impl<T: AddFieldAndValue> field::Visit for EventBuilderVisitorWrapper<T> {
-    fn record_debug(&mut self, field: &field::Field, value: &dyn std::fmt::Debug) {
+    fn record_debug(&mut self, field: &field::Field, value: &dyn core::fmt::Debug) {
         let mut string = String::with_capacity(10);
         if write!(string, "{:?}", value).is_err() {
             // TODO: Needs to do a heap allocation
@@ -84,5 +86,6 @@ impl<T: AddFieldAndValue> field::Visit for EventBuilderVisitorWrapper<T> {
         })
     }
 
+    #[cfg(feature = "std")]
     fn record_error(&mut self, _field: &field::Field, _value: &(dyn std::error::Error + 'static)) {}
 }

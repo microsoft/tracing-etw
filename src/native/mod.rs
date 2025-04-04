@@ -41,6 +41,9 @@ pub(crate) use tracelogging_dynamic::Guid as native_guid;
 use crate::error::EtwError;
 use core::pin::Pin;
 
+extern crate alloc;
+use alloc::sync::Arc;
+
 #[doc(hidden)]
 #[derive(Copy, Clone, PartialEq, Eq)]
 pub struct GuidWrapper(u128);
@@ -118,7 +121,7 @@ pub trait ProviderTraits {
         provider_id: &G,
         provider_group: &Option<ProviderGroupType>,
         _default_keyword: u64,
-    ) -> Pin<std::sync::Arc<Self>>
+    ) -> Pin<Arc<Self>>
     where
         for<'a> &'a G: Into<GuidWrapper>;
 

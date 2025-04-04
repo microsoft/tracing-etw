@@ -3,41 +3,19 @@ use tracing::Subscriber;
 use tracing_core::{callsite, span};
 use tracing_subscriber::registry::LookupSpan;
 
-use crate::{layer::common, native::OutputMode, statics::*};
+use crate::{layer::{common, _EtwTracingSubscriber}, native::OutputMode, statics::*};
 
-use super::EtwLayer;
-
-impl<S, OutMode: OutputMode + 'static> tracing_subscriber::Layer<S> for EtwLayer<S, OutMode>
+impl<OutMode: OutputMode + 'static, S> tracing_subscriber::Layer<S> for _EtwTracingSubscriber<OutMode, S>
 where
     S: Subscriber + for<'a> LookupSpan<'a>,
     crate::native::Provider<OutMode>: crate::native::EventWriter<OutMode>,
 {
     fn on_register_dispatch(&self, _collector: &tracing::Dispatch) {
-        // Late init when the layer is installed as a subscriber
+        // Late init when the layer is installed as a tracing_core::subscriber and becomes a Dispatcher
     }
 
     fn on_layer(&mut self, _subscriber: &mut S) {
-        // Late init when the layer is attached to a subscriber
-    }
-
-    #[cfg(any(feature = "global_filter", docsrs))]
-    fn enabled(
-        &self,
-        metadata: &tracing::Metadata<'_>,
-        _ctx: tracing_subscriber::layer::Context<'_, S>,
-    ) -> bool {
-        self.layer
-            .is_enabled(&metadata.callsite(), metadata.level())
-    }
-
-    #[cfg(any(feature = "global_filter", docsrs))]
-    fn event_enabled(
-        &self,
-        event: &tracing::Event<'_>,
-        _ctx: tracing_subscriber::layer::Context<'_, S>,
-    ) -> bool {
-        self.layer
-            .is_enabled(&event.metadata().callsite(), event.metadata().level())
+        // Late init when the layer is added to a subscriber
     }
 
     fn on_event(

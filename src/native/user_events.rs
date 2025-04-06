@@ -1,3 +1,8 @@
+use core::{cell::RefCell, marker::PhantomData, ops::DerefMut, pin::Pin};
+extern crate alloc;
+use alloc::{string::String, sync::Arc};
+use std::time::SystemTime;
+
 use crate::{
     error::EtwError,
     native::{CommonSchemaOutput, NormalOutput, OutputMode},
@@ -6,14 +11,6 @@ use crate::{
 };
 use eventheader::*;
 use eventheader_dynamic::EventBuilder;
-use std::{
-    cell::RefCell,
-    marker::PhantomData,
-    ops::DerefMut,
-    pin::Pin,
-    sync::Arc,
-    time::SystemTime,
-};
 
 pub(crate) type ProviderGroupType = std::borrow::Cow<'static, str>;
 

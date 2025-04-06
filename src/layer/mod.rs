@@ -4,7 +4,10 @@ use alloc::sync::Arc;
 
 use tracing_core::callsite;
 
-use crate::{native::{OutputMode, ProviderTraits}, statics::*};
+use crate::{
+    native::{OutputMode, ProviderTraits},
+    statics::*,
+};
 
 // This struct needs to be public as it implements the tracing traits.
 #[doc(hidden)]
@@ -14,8 +17,7 @@ pub struct _EtwTracingSubscriber<OutMode: OutputMode, S = ()> {
     pub(crate) _p: PhantomData<S>,
 }
 
-impl<OutMode: OutputMode, S> _EtwTracingSubscriber<OutMode, S>
-{
+impl<OutMode: OutputMode, S> _EtwTracingSubscriber<OutMode, S> {
     pub(crate) fn is_enabled(
         &self,
         callsite: &callsite::Identifier,

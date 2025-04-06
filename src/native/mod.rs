@@ -2,14 +2,14 @@
 #[doc(hidden)]
 pub mod etw;
 #[cfg(target_os = "windows")]
+pub(crate) use etw::_start__etw_kw;
+#[cfg(target_os = "windows")]
+pub(crate) use etw::_stop__etw_kw;
+#[cfg(target_os = "windows")]
 #[doc(hidden)]
 pub use etw::Provider;
 #[cfg(target_os = "windows")]
 pub(crate) use etw::ProviderGroupType;
-#[cfg(target_os = "windows")]
-pub(crate) use etw::_start__etw_kw;
-#[cfg(target_os = "windows")]
-pub(crate) use etw::_stop__etw_kw;
 
 #[cfg(not(any(target_os = "windows", target_os = "linux")))]
 #[doc(hidden)]
@@ -24,14 +24,14 @@ pub(crate) use noop::ProviderGroupType;
 #[doc(hidden)]
 pub mod user_events;
 #[cfg(target_os = "linux")]
+pub(crate) use user_events::_start__etw_kw;
+#[cfg(target_os = "linux")]
+pub(crate) use user_events::_stop__etw_kw;
+#[cfg(target_os = "linux")]
 #[doc(hidden)]
 pub use user_events::Provider;
 #[cfg(target_os = "linux")]
 pub(crate) use user_events::ProviderGroupType;
-#[cfg(target_os = "linux")]
-pub(crate) use user_events::_start__etw_kw;
-#[cfg(target_os = "linux")]
-pub(crate) use user_events::_stop__etw_kw;
 
 #[cfg(target_os = "linux")]
 pub(crate) use eventheader::Guid as native_guid;
@@ -86,22 +86,24 @@ impl AsRef<u128> for GuidWrapper {
 
 pub const fn to_hex_utf8_bytes(val: u64) -> [u8; 16] {
     const HEX_DIGITS: &[u8] = b"0123456789abcdef";
-    [ HEX_DIGITS[((val >> 60) & 0xf) as usize],
-      HEX_DIGITS[((val >> 56) & 0xf) as usize],
-      HEX_DIGITS[((val >> 52) & 0xf) as usize],
-      HEX_DIGITS[((val >> 48) & 0xf) as usize],
-      HEX_DIGITS[((val >> 44) & 0xf) as usize],
-      HEX_DIGITS[((val >> 40) & 0xf) as usize],
-      HEX_DIGITS[((val >> 36) & 0xf) as usize],
-      HEX_DIGITS[((val >> 32) & 0xf) as usize],
-      HEX_DIGITS[((val >> 28) & 0xf) as usize],
-      HEX_DIGITS[((val >> 24) & 0xf) as usize],
-      HEX_DIGITS[((val >> 20) & 0xf) as usize],
-      HEX_DIGITS[((val >> 16) & 0xf) as usize],
-      HEX_DIGITS[((val >> 12) & 0xf) as usize],
-      HEX_DIGITS[((val >> 8) & 0xf) as usize],
-      HEX_DIGITS[((val >> 4) & 0xf) as usize],
-      HEX_DIGITS[((val >> 0) & 0xf) as usize]]
+    [
+        HEX_DIGITS[((val >> 60) & 0xf) as usize],
+        HEX_DIGITS[((val >> 56) & 0xf) as usize],
+        HEX_DIGITS[((val >> 52) & 0xf) as usize],
+        HEX_DIGITS[((val >> 48) & 0xf) as usize],
+        HEX_DIGITS[((val >> 44) & 0xf) as usize],
+        HEX_DIGITS[((val >> 40) & 0xf) as usize],
+        HEX_DIGITS[((val >> 36) & 0xf) as usize],
+        HEX_DIGITS[((val >> 32) & 0xf) as usize],
+        HEX_DIGITS[((val >> 28) & 0xf) as usize],
+        HEX_DIGITS[((val >> 24) & 0xf) as usize],
+        HEX_DIGITS[((val >> 20) & 0xf) as usize],
+        HEX_DIGITS[((val >> 16) & 0xf) as usize],
+        HEX_DIGITS[((val >> 12) & 0xf) as usize],
+        HEX_DIGITS[((val >> 8) & 0xf) as usize],
+        HEX_DIGITS[((val >> 4) & 0xf) as usize],
+        HEX_DIGITS[((val >> 0) & 0xf) as usize],
+    ]
 }
 
 impl GuidWrapper {

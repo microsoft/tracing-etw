@@ -1,7 +1,7 @@
 // Module for static variables that are used by the crate.
 
+use core::{cmp, hash::BuildHasher, iter::FusedIterator};
 use std::sync::LazyLock;
-use core::{hash::BuildHasher, cmp, iter::FusedIterator};
 extern crate alloc;
 use alloc::{boxed::Box, vec::Vec};
 

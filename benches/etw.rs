@@ -1,9 +1,9 @@
 #![allow(unused_imports, dead_code)]
 
-use criterion::{criterion_group, criterion_main, Criterion};
+use criterion::{Criterion, criterion_group, criterion_main};
 #[cfg(target_os = "windows")]
 //use etw_helpers::{FileMode, SessionBuilder};
-use tracing::{event, span, Level};
+use tracing::{Level, event, span};
 use tracing_etw::*;
 use tracing_subscriber::{self, prelude::*};
 

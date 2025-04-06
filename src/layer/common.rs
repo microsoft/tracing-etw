@@ -1,4 +1,9 @@
-use core::{hash::{Hash, Hasher, BuildHasher}, num::NonZeroU64, pin::Pin, sync::atomic::{AtomicUsize, Ordering}};
+use core::{
+    hash::{BuildHasher, Hash, Hasher},
+    num::NonZeroU64,
+    pin::Pin,
+    sync::atomic::{AtomicUsize, Ordering},
+};
 extern crate alloc;
 use alloc::{boxed::Box, vec::Vec};
 use std::{sync::RwLock, time::SystemTime};
@@ -10,8 +15,8 @@ use crate::{
     native::{EventWriter, OutputMode},
     statics::GLOBAL_ACTIVITY_SEED,
     values::{
-        span_values::{FieldValueIndex, SpanValueVisitor},
         ValueTypes,
+        span_values::{FieldValueIndex, SpanValueVisitor},
     },
 };
 
@@ -52,7 +57,7 @@ struct SpanData {
     name: &'static str,
     parent_id: Option<NonZeroU64>, // sizeof(Option<NonZeroU64>) == sizeof(u64) is guaranteed by the standard
     level: tracing_core::Level,
-    ref_count: AtomicUsize
+    ref_count: AtomicUsize,
 }
 
 // Data crated by tracing_core for a span, plus the crate data.
@@ -60,7 +65,7 @@ struct SpanData {
 #[doc(hidden)]
 pub struct SpanRef<'a> {
     id: NonZeroU64,
-    data: &'a SpanData
+    data: &'a SpanData,
 }
 
 impl<'a> SpanRef<'a> {
@@ -152,7 +157,7 @@ pub(crate) fn create_span_data_for_new_span(
             name: metadata.name(),
             parent_id: NonZeroU64::new(parent_span_id),
             level: *metadata.level(),
-            ref_count: AtomicUsize::new(1)
+            ref_count: AtomicUsize::new(1),
         }
     };
 
@@ -189,15 +194,14 @@ pub(crate) fn addref_span(id: &tracing::span::Id) {
     }
 }
 
-pub(crate) fn release_span(id: &tracing::span::Id) -> bool{
+pub(crate) fn release_span(id: &tracing::span::Id) -> bool {
     let mut current_refcount = {
         // Check the refcount while allowing others to also interact with thte map
         let span_data_guard = SPAN_DATA.read().unwrap();
         let spandata = span_data_guard.get(id);
         if let Some(span) = spandata {
             span.ref_count.fetch_sub(1, Ordering::Relaxed)
-        }
-        else {
+        } else {
             debug_assert!(false, "Close of unrecognized span");
             1 // Magic up a refcount so we skip the next part in release builds
         }
@@ -208,7 +212,7 @@ pub(crate) fn release_span(id: &tracing::span::Id) -> bool{
         let mut span_data_guard = SPAN_DATA.write().unwrap();
         let spandata = span_data_guard.get(id);
         if let Some(span) = spandata {
-            current_refcount = span.ref_count.load( Ordering::Relaxed);
+            current_refcount = span.ref_count.load(Ordering::Relaxed);
             if current_refcount == 0 {
                 let _ = span_data_guard.remove(id);
             }
@@ -242,7 +246,10 @@ pub(crate) fn enter_span<OutMode: OutputMode>(
     data.start_time = timestamp;
 
     writer.span_start(
-        SpanRef{ id: id.into_non_zero_u64(), data: &data },
+        SpanRef {
+            id: id.into_non_zero_u64(),
+            data: &data,
+        },
         keyword,
         tag,
     );
@@ -266,7 +273,10 @@ pub(crate) fn exit_span<OutMode: OutputMode>(
 
     writer.span_stop(
         (data.start_time, stop_timestamp),
-        SpanRef{ id: id.into_non_zero_u64(), data: &data },
+        SpanRef {
+            id: id.into_non_zero_u64(),
+            data: &data,
+        },
         keyword,
         tag,
     );

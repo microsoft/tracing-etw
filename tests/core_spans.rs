@@ -1,6 +1,6 @@
 //#![cfg(feature = "std")]
 
-use tracing::{error_span, event, span, Level};
+use tracing::{Level, error_span, event, span};
 use tracing_etw::LayerBuilder;
 
 #[test]

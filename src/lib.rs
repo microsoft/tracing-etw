@@ -182,7 +182,6 @@
 // only enables the `doc_cfg` feature when
 // the `docsrs` configuration attribute is defined
 #![cfg_attr(docsrs, feature(doc_cfg))]
-
 #![cfg_attr(not(feature = "std"), no_std)]
 
 mod layer_builder;

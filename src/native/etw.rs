@@ -184,8 +184,12 @@ impl<Mode: OutputMode> super::EventWriter<NormalOutput> for Provider<Mode> {
         event_tag: u32,
     ) {
         EBW.with_borrow_mut(|mut eb| {
-
-            eb.reset(data.name(), Self::map_level(&data.level()), keyword, event_tag);
+            eb.reset(
+                data.name(),
+                Self::map_level(&data.level()),
+                keyword,
+                event_tag,
+            );
             eb.opcode(Opcode::Start);
 
             eb.add_systemtime(
@@ -231,8 +235,12 @@ impl<Mode: OutputMode> super::EventWriter<NormalOutput> for Provider<Mode> {
         event_tag: u32,
     ) {
         EBW.with_borrow_mut(|mut eb| {
-
-            eb.reset(data.name(), Self::map_level(&data.level()), keyword, event_tag);
+            eb.reset(
+                data.name(),
+                Self::map_level(&data.level()),
+                keyword,
+                event_tag,
+            );
             eb.opcode(Opcode::Stop);
 
             eb.add_systemtime(
@@ -300,7 +308,6 @@ impl<Mode: OutputMode> super::EventWriter<NormalOutput> for Provider<Mode> {
         };
 
         EBW.with_borrow_mut(|mut eb| {
-
             eb.reset(event_name, Self::map_level(level), keyword, event_tag);
             eb.opcode(Opcode::Info);
 
@@ -383,8 +390,12 @@ impl<Mode: OutputMode> super::EventWriter<CommonSchemaOutput> for Provider<Mode>
         let span_id = super::to_hex_utf8_bytes(data.id());
 
         EBW.with_borrow_mut(|mut eb| {
-
-            eb.reset(data.name(), Self::map_level(&data.level()), keyword, event_tag);
+            eb.reset(
+                data.name(),
+                Self::map_level(&data.level()),
+                keyword,
+                event_tag,
+            );
             eb.opcode(Opcode::Info);
 
             // Promoting values from PartC to PartA extensions is apparently just a draft spec
@@ -473,7 +484,6 @@ impl<Mode: OutputMode> super::EventWriter<CommonSchemaOutput> for Provider<Mode>
         event: &tracing::Event<'_>,
     ) {
         EBW.with_borrow_mut(|mut eb| {
-
             eb.reset(event_name, Self::map_level(level), keyword, event_tag);
             eb.opcode(Opcode::Info);
 
@@ -496,7 +506,12 @@ impl<Mode: OutputMode> super::EventWriter<CommonSchemaOutput> for Provider<Mode>
                     eb.add_struct("ext_dt", 2, 0);
                     {
                         eb.add_str8("traceId", "", OutType::Utf8, 0); // TODO
-                        eb.add_str8("spanId", super::to_hex_utf8_bytes(current_span), OutType::Utf8, 0);
+                        eb.add_str8(
+                            "spanId",
+                            super::to_hex_utf8_bytes(current_span),
+                            OutType::Utf8,
+                            0,
+                        );
                     }
                 }
             }

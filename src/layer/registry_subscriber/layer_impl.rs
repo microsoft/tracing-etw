@@ -3,9 +3,14 @@ use tracing::Subscriber;
 use tracing_core::{callsite, span};
 use tracing_subscriber::registry::LookupSpan;
 
-use crate::{layer::{common, _EtwTracingSubscriber}, native::OutputMode, statics::*};
+use crate::{
+    layer::{_EtwTracingSubscriber, common},
+    native::OutputMode,
+    statics::*,
+};
 
-impl<OutMode: OutputMode + 'static, S> tracing_subscriber::Layer<S> for _EtwTracingSubscriber<OutMode, S>
+impl<OutMode: OutputMode + 'static, S> tracing_subscriber::Layer<S>
+    for _EtwTracingSubscriber<OutMode, S>
 where
     S: Subscriber + for<'a> LookupSpan<'a>,
     crate::native::Provider<OutMode>: crate::native::EventWriter<OutMode>,

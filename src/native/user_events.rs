@@ -1,7 +1,9 @@
 use core::{cell::RefCell, marker::PhantomData, ops::DerefMut, pin::Pin};
 extern crate alloc;
-use alloc::{string::String, sync::Arc};
-use std::time::SystemTime;
+use alloc::{
+    string::{String, ToString},
+    sync::Arc,
+};
 
 use crate::{
     error::EtwError,
@@ -105,11 +107,7 @@ impl<OutMode: OutputMode> crate::native::ProviderTraits for Provider<OutMode> {
             .read()
             .unwrap()
             .find_set(Self::map_level(level), keyword);
-        if let Some(s) = es {
-            s.enabled()
-        } else {
-            false
-        }
+        if let Some(s) = es { s.enabled() } else { false }
     }
 
     fn new<G>(
@@ -203,7 +201,6 @@ impl<Mode: OutputMode> super::EventWriter<NormalOutput> for Provider<Mode> {
         };
 
         EBW.with_borrow_mut(|mut eb| {
-
             eb.reset(span_name, event_tag as u16);
             eb.opcode(Opcode::ActivityStart);
 
@@ -259,7 +256,6 @@ impl<Mode: OutputMode> super::EventWriter<NormalOutput> for Provider<Mode> {
         };
 
         EBW.with_borrow_mut(|mut eb| {
-
             eb.reset(span_name, event_tag as u16);
             eb.opcode(Opcode::ActivityStop);
 
@@ -302,7 +298,7 @@ impl<Mode: OutputMode> super::EventWriter<NormalOutput> for Provider<Mode> {
 
     fn write_record(
         self: Pin<&Self>,
-        timestamp: SystemTime,
+        timestamp: std::time::SystemTime,
         current_span: u64,
         parent_span: u64,
         event_name: &str,
@@ -336,7 +332,6 @@ impl<Mode: OutputMode> super::EventWriter<NormalOutput> for Provider<Mode> {
         };
 
         EBW.with_borrow_mut(|mut eb| {
-
             eb.reset(event_name, event_tag as u16);
             eb.opcode(Opcode::Info);
 
@@ -427,7 +422,6 @@ impl<Mode: OutputMode> super::EventWriter<CommonSchemaOutput> for Provider<Mode>
         };
 
         EBW.with_borrow_mut(|mut eb| {
-
             eb.reset(data.name(), event_tag as u16);
             eb.opcode(Opcode::Info);
 
@@ -469,7 +463,12 @@ impl<Mode: OutputMode> super::EventWriter<CommonSchemaOutput> for Provider<Mode>
                 eb.add_str("_typeName", "Span", FieldFormat::Default, 0);
 
                 if let Some(id) = parent_span {
-                    eb.add_str("parentId", super::to_hex_utf8_bytes(id), FieldFormat::Default, 0);
+                    eb.add_str(
+                        "parentId",
+                        super::to_hex_utf8_bytes(id),
+                        FieldFormat::Default,
+                        0,
+                    );
                 }
 
                 eb.add_str("name", data.name(), FieldFormat::Default, 0);
@@ -507,7 +506,7 @@ impl<Mode: OutputMode> super::EventWriter<CommonSchemaOutput> for Provider<Mode>
 
     fn write_record(
         self: Pin<&Self>,
-        timestamp: SystemTime,
+        timestamp: std::time::SystemTime,
         current_span: u64,
         _parent_span: u64,
         event_name: &str,
@@ -523,7 +522,6 @@ impl<Mode: OutputMode> super::EventWriter<CommonSchemaOutput> for Provider<Mode>
         };
 
         EBW.with_borrow_mut(|mut eb| {
-
             eb.reset(event_name, event_tag as u16);
             eb.opcode(Opcode::Info);
 
@@ -546,7 +544,12 @@ impl<Mode: OutputMode> super::EventWriter<CommonSchemaOutput> for Provider<Mode>
                     eb.add_struct("ext_dt", 2, 0);
                     {
                         eb.add_str("traceId", "", FieldFormat::Default, 0); // TODO
-                        eb.add_str("spanId", super::to_hex_utf8_bytes(current_span), FieldFormat::Default, 0);
+                        eb.add_str(
+                            "spanId",
+                            super::to_hex_utf8_bytes(current_span),
+                            FieldFormat::Default,
+                            0,
+                        );
                     }
                 }
             }

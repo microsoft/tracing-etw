@@ -2,16 +2,16 @@ use core::marker::PhantomData;
 extern crate alloc;
 use alloc::{boxed::Box, string::ToString};
 
+#[cfg(any(feature = "std", docsrs))]
+use tracing::Subscriber;
 #[allow(unused_imports)] // Many imports are used exclusively by feature-gated code
 use tracing::metadata::LevelFilter;
 #[cfg(any(feature = "std", docsrs))]
-use tracing::Subscriber;
-#[cfg(any(feature = "std", docsrs))]
 #[allow(unused_imports)]
 use tracing_subscriber::{
-    filter::{combinator::And, FilterExt, Filtered, Targets},
+    filter::{FilterExt, Filtered, Targets, combinator::And},
+    layer::{Filter, Layer},
     registry::LookupSpan,
-    layer::{Filter, Layer}
 };
 
 use crate::layer::_EtwTracingSubscriber;
@@ -233,7 +233,7 @@ impl<OutMode: OutputMode + 'static> LayerBuilder<OutMode> {
     /// This layer includes a [tracing_subscriber::Filter] that reports to `tracing` when
     /// an event is enabled to a ETW/user_events collector. Disabled events can then be more
     /// efficiently skipped over.
-    /// 
+    ///
     /// ```
     /// # use tracing_subscriber::prelude::*;
     /// # let reg = tracing_subscriber::registry();
@@ -262,7 +262,7 @@ impl<OutMode: OutputMode + 'static> LayerBuilder<OutMode> {
                 self.default_keyword,
             ),
             default_keyword: self.default_keyword,
-            _p: PhantomData
+            _p: PhantomData,
         };
 
         let filter = self.build_filter(layer.clone());
@@ -273,12 +273,12 @@ impl<OutMode: OutputMode + 'static> LayerBuilder<OutMode> {
     /// Constructs a [tracing_core::Subscriber] implementation.
     /// Prefer [self::build_layer] instead; this should only be used in no_std environments
     /// or when `tracing_subscriber::Registry` cannot be used.
-    /// 
+    ///
     /// This subscriber does not implement any callsite enablement filtering, meaning
     /// events that are not enabled by ETW/user_events are still considered to be enabled
     /// by `tracing`. For more efficient processing of disabled events, use [self::build_layer]
     /// to construct a [tracing_subscriber::Layer] that includes per-layer filtering support.
-    /// 
+    ///
     /// ```
     /// let built_layer = tracing_etw::LayerBuilder::new("SampleProviderName").build();
     /// assert!(built_layer.is_ok());
@@ -287,9 +287,7 @@ impl<OutMode: OutputMode + 'static> LayerBuilder<OutMode> {
     /// ```
     ///
     #[allow(clippy::type_complexity)]
-    pub fn build_subscriber(
-        self,
-    ) -> Result<_EtwTracingSubscriber<OutMode>, EtwError>
+    pub fn build_subscriber(self) -> Result<_EtwTracingSubscriber<OutMode>, EtwError>
     where
         crate::native::Provider<OutMode>: ProviderTraits + EventWriter<OutMode>,
     {
@@ -303,16 +301,14 @@ impl<OutMode: OutputMode + 'static> LayerBuilder<OutMode> {
                 self.default_keyword,
             ),
             default_keyword: self.default_keyword,
-            _p: PhantomData
+            _p: PhantomData,
         })
     }
 
     #[allow(clippy::type_complexity)]
     #[cfg_attr(docsrs, doc(cfg(not(feature = "std"))))]
     #[cfg(any(not(feature = "std"), docsrs))]
-    pub fn build(
-        self,
-    ) -> Result<_EtwTracingSubscriber<OutMode>, EtwError>
+    pub fn build(self) -> Result<_EtwTracingSubscriber<OutMode>, EtwError>
     where
         crate::native::Provider<OutMode>: ProviderTraits + EventWriter<OutMode>,
     {
@@ -359,7 +355,10 @@ impl<OutMode: OutputMode + 'static> LayerBuilder<OutMode> {
     pub fn build_with_target<S>(
         self,
         target: &'static str,
-    ) -> Result<Filtered<_EtwTracingSubscriber<OutMode, S>, And<EtwFilter<S, OutMode>, Targets, S>, S>, EtwError>
+    ) -> Result<
+        Filtered<_EtwTracingSubscriber<OutMode, S>, And<EtwFilter<S, OutMode>, Targets, S>, S>,
+        EtwError,
+    >
     where
         S: Subscriber + for<'a> LookupSpan<'a>,
         crate::native::Provider<OutMode>: ProviderTraits + EventWriter<OutMode>,
@@ -374,7 +373,7 @@ impl<OutMode: OutputMode + 'static> LayerBuilder<OutMode> {
                 self.default_keyword,
             ),
             default_keyword: self.default_keyword,
-            _p: PhantomData
+            _p: PhantomData,
         };
 
         let filter = self.build_filter(layer.clone());
@@ -405,7 +404,7 @@ impl<OutMode: OutputMode + 'static> LayerBuilder<OutMode> {
                 self.default_keyword,
             ),
             default_keyword: self.default_keyword,
-            _p: PhantomData
+            _p: PhantomData,
         };
 
         // By skipping the adding the filter, we can avoid the enablement checks and

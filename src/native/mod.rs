@@ -84,6 +84,26 @@ impl AsRef<u128> for GuidWrapper {
     }
 }
 
+pub const fn to_hex_utf8_bytes(val: u64) -> [u8; 16] {
+    const HEX_DIGITS: &[u8] = b"0123456789abcdef";
+    [ HEX_DIGITS[((val >> 60) & 0xf) as usize],
+      HEX_DIGITS[((val >> 56) & 0xf) as usize],
+      HEX_DIGITS[((val >> 52) & 0xf) as usize],
+      HEX_DIGITS[((val >> 48) & 0xf) as usize],
+      HEX_DIGITS[((val >> 44) & 0xf) as usize],
+      HEX_DIGITS[((val >> 40) & 0xf) as usize],
+      HEX_DIGITS[((val >> 36) & 0xf) as usize],
+      HEX_DIGITS[((val >> 32) & 0xf) as usize],
+      HEX_DIGITS[((val >> 28) & 0xf) as usize],
+      HEX_DIGITS[((val >> 24) & 0xf) as usize],
+      HEX_DIGITS[((val >> 20) & 0xf) as usize],
+      HEX_DIGITS[((val >> 16) & 0xf) as usize],
+      HEX_DIGITS[((val >> 12) & 0xf) as usize],
+      HEX_DIGITS[((val >> 8) & 0xf) as usize],
+      HEX_DIGITS[((val >> 4) & 0xf) as usize],
+      HEX_DIGITS[((val >> 0) & 0xf) as usize]]
+}
+
 impl GuidWrapper {
     pub fn from_name(name: &str) -> Self {
         Self(native_guid::from_name(name).to_u128())

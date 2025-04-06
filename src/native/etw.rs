@@ -1,7 +1,6 @@
-use core::{cell::RefCell, marker::PhantomData, mem::MaybeUninit, ops::DerefMut, pin::Pin};
+use core::{cell::RefCell, marker::PhantomData, ops::DerefMut, pin::Pin};
 extern crate alloc;
 use alloc::{string::String, sync::Arc};
-use std::io::{Cursor, Write};
 
 use chrono::{Datelike, Timelike};
 use tracelogging::*;
@@ -384,12 +383,7 @@ impl<Mode: OutputMode> super::EventWriter<CommonSchemaOutput> for Provider<Mode>
         event_tag: u32,
     ) {
         // We need a UTF-8 rather than raw bytes, so we can't use data.activity_id() here
-        let span_id = unsafe {
-            let mut span_id = MaybeUninit::<[u8; 16]>::uninit();
-            let mut cur = Cursor::new((*span_id.as_mut_ptr()).as_mut_slice());
-            write!(&mut cur, "{:16x}", data.id()).expect("!write");
-            span_id.assume_init()
-        };
+        let span_id = super::to_hex_utf8_bytes(data.id());
 
         EBW.with(|eb| {
             let mut eb = eb.borrow_mut();
@@ -434,15 +428,8 @@ impl<Mode: OutputMode> super::EventWriter<CommonSchemaOutput> for Provider<Mode>
             {
                 eb.add_str8("_typeName", "Span", OutType::Utf8, 0);
 
-                if parent_span.is_some() {
-                    let parent_span_id = unsafe {
-                        let mut span_id = MaybeUninit::<[u8; 16]>::uninit();
-                        let mut cur = Cursor::new((*span_id.as_mut_ptr()).as_mut_slice());
-                        write!(&mut cur, "{:16x}", parent_span.unwrap_unchecked()).expect("!write");
-                        span_id.assume_init()
-                    };
-
-                    eb.add_str8("parentId", parent_span_id, OutType::Utf8, 0);
+                if let Some(id) = parent_span {
+                    eb.add_str8("parentId", super::to_hex_utf8_bytes(id), OutType::Utf8, 0);
                 }
 
                 eb.add_str8("name", data.name(), OutType::Utf8, 0);
@@ -513,15 +500,8 @@ impl<Mode: OutputMode> super::EventWriter<CommonSchemaOutput> for Provider<Mode>
                 if current_span != 0 {
                     eb.add_struct("ext_dt", 2, 0);
                     {
-                        let span_id = unsafe {
-                            let mut span_id = MaybeUninit::<[u8; 16]>::uninit();
-                            let mut cur = Cursor::new((*span_id.as_mut_ptr()).as_mut_slice());
-                            write!(&mut cur, "{:16x}", current_span).expect("!write");
-                            span_id.assume_init()
-                        };
-
                         eb.add_str8("traceId", "", OutType::Utf8, 0); // TODO
-                        eb.add_str8("spanId", span_id, OutType::Utf8, 0);
+                        eb.add_str8("spanId", super::to_hex_utf8_bytes(current_span), OutType::Utf8, 0);
                     }
                 }
             }

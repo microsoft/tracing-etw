@@ -205,8 +205,7 @@ impl<Mode: OutputMode> super::EventWriter<NormalOutput> for Provider<Mode> {
             self.register_set(Self::map_level(&data.level()), keyword)
         };
 
-        EBW.with(|eb| {
-            let mut eb = eb.borrow_mut();
+        EBW.with_borrow_mut(|mut eb| {
 
             eb.reset(span_name, event_tag as u16);
             eb.opcode(Opcode::ActivityStart);
@@ -262,8 +261,7 @@ impl<Mode: OutputMode> super::EventWriter<NormalOutput> for Provider<Mode> {
             self.register_set(Self::map_level(&data.level()), keyword)
         };
 
-        EBW.with(|eb| {
-            let mut eb = eb.borrow_mut();
+        EBW.with_borrow_mut(|mut eb| {
 
             eb.reset(span_name, event_tag as u16);
             eb.opcode(Opcode::ActivityStop);
@@ -340,8 +338,7 @@ impl<Mode: OutputMode> super::EventWriter<NormalOutput> for Provider<Mode> {
             0
         };
 
-        EBW.with(|eb| {
-            let mut eb = eb.borrow_mut();
+        EBW.with_borrow_mut(|mut eb| {
 
             eb.reset(event_name, event_tag as u16);
             eb.opcode(Opcode::Info);
@@ -432,8 +429,7 @@ impl<Mode: OutputMode> super::EventWriter<CommonSchemaOutput> for Provider<Mode>
             self.register_set(Self::map_level(&data.level()), keyword)
         };
 
-        EBW.with(|eb| {
-            let mut eb = eb.borrow_mut();
+        EBW.with_borrow_mut(|mut eb| {
 
             eb.reset(data.name(), event_tag as u16);
             eb.opcode(Opcode::Info);
@@ -529,8 +525,7 @@ impl<Mode: OutputMode> super::EventWriter<CommonSchemaOutput> for Provider<Mode>
             self.register_set(Self::map_level(level), keyword)
         };
 
-        EBW.with(|eb| {
-            let mut eb = eb.borrow_mut();
+        EBW.with_borrow_mut(|mut eb| {
 
             eb.reset(event_name, event_tag as u16);
             eb.opcode(Opcode::Info);

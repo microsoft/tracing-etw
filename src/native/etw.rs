@@ -183,8 +183,7 @@ impl<Mode: OutputMode> super::EventWriter<NormalOutput> for Provider<Mode> {
         keyword: u64,
         event_tag: u32,
     ) {
-        EBW.with(|eb| {
-            let mut eb = eb.borrow_mut();
+        EBW.with_borrow_mut(|mut eb| {
 
             eb.reset(data.name(), Self::map_level(&data.level()), keyword, event_tag);
             eb.opcode(Opcode::Start);
@@ -231,8 +230,7 @@ impl<Mode: OutputMode> super::EventWriter<NormalOutput> for Provider<Mode> {
         keyword: u64,
         event_tag: u32,
     ) {
-        EBW.with(|eb| {
-            let mut eb = eb.borrow_mut();
+        EBW.with_borrow_mut(|mut eb| {
 
             eb.reset(data.name(), Self::map_level(&data.level()), keyword, event_tag);
             eb.opcode(Opcode::Stop);
@@ -301,8 +299,7 @@ impl<Mode: OutputMode> super::EventWriter<NormalOutput> for Provider<Mode> {
             0
         };
 
-        EBW.with(|eb| {
-            let mut eb = eb.borrow_mut();
+        EBW.with_borrow_mut(|mut eb| {
 
             eb.reset(event_name, Self::map_level(level), keyword, event_tag);
             eb.opcode(Opcode::Info);
@@ -385,8 +382,7 @@ impl<Mode: OutputMode> super::EventWriter<CommonSchemaOutput> for Provider<Mode>
         // We need a UTF-8 rather than raw bytes, so we can't use data.activity_id() here
         let span_id = super::to_hex_utf8_bytes(data.id());
 
-        EBW.with(|eb| {
-            let mut eb = eb.borrow_mut();
+        EBW.with_borrow_mut(|mut eb| {
 
             eb.reset(data.name(), Self::map_level(&data.level()), keyword, event_tag);
             eb.opcode(Opcode::Info);
@@ -476,8 +472,7 @@ impl<Mode: OutputMode> super::EventWriter<CommonSchemaOutput> for Provider<Mode>
         event_tag: u32,
         event: &tracing::Event<'_>,
     ) {
-        EBW.with(|eb| {
-            let mut eb = eb.borrow_mut();
+        EBW.with_borrow_mut(|mut eb| {
 
             eb.reset(event_name, Self::map_level(level), keyword, event_tag);
             eb.opcode(Opcode::Info);

@@ -6,7 +6,7 @@ use core::{
 };
 extern crate alloc;
 use alloc::{boxed::Box, vec::Vec};
-use std::{sync::RwLock, time::SystemTime};
+use std::sync::RwLock;
 
 use hashbrown::HashMap;
 use hashers::fnv::FNV1aHasher64;
@@ -41,7 +41,7 @@ impl BuildHasher for FNV1aHasher64HasherBuilder {
         Self: Sized,
         Self::Hasher: Hasher,
     {
-        let mut hasher = self.build_hasher();
+        let mut hasher = FNV1aHasher64::default();
         x.hash(&mut hasher);
         hasher.finish()
     }
@@ -53,7 +53,7 @@ struct SpanData {
     fields: Box<[FieldValueIndex]>,
     activity_id: [u8; 16], // if set, byte 0 is 1 and 64-bit span ID in the lower 8 bytes
     related_activity_id: [u8; 16], // if set, byte 0 is 1 and 64-bit parent span ID in the lower 8 bytes
-    start_time: SystemTime,
+    start_time: std::time::SystemTime,
     name: &'static str,
     parent_id: Option<NonZeroU64>, // sizeof(Option<NonZeroU64>) == sizeof(u64) is guaranteed by the standard
     level: tracing_core::Level,
@@ -68,7 +68,7 @@ pub struct SpanRef<'a> {
     data: &'a SpanData,
 }
 
-impl<'a> SpanRef<'a> {
+impl SpanRef<'_> {
     pub(crate) fn id(&self) -> u64 {
         self.id.into()
     }
@@ -85,7 +85,7 @@ impl<'a> SpanRef<'a> {
         self.data.level
     }
 
-    pub(crate) fn timestamp(&self) -> SystemTime {
+    pub(crate) fn timestamp(&self) -> std::time::SystemTime {
         self.data.start_time
     }
 
@@ -153,7 +153,7 @@ pub(crate) fn create_span_data_for_new_span(
             fields: v.into_boxed_slice(),
             activity_id: *GLOBAL_ACTIVITY_SEED,
             related_activity_id: *GLOBAL_ACTIVITY_SEED,
-            start_time: SystemTime::UNIX_EPOCH,
+            start_time: std::time::SystemTime::UNIX_EPOCH,
             name: metadata.name(),
             parent_id: NonZeroU64::new(parent_span_id),
             level: *metadata.level(),
@@ -248,7 +248,7 @@ pub(crate) fn enter_span<OutMode: OutputMode>(
     writer.span_start(
         SpanRef {
             id: id.into_non_zero_u64(),
-            data: &data,
+            data,
         },
         keyword,
         tag,
@@ -275,7 +275,7 @@ pub(crate) fn exit_span<OutMode: OutputMode>(
         (data.start_time, stop_timestamp),
         SpanRef {
             id: id.into_non_zero_u64(),
-            data: &data,
+            data,
         },
         keyword,
         tag,

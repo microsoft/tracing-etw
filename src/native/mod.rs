@@ -158,14 +158,14 @@ pub trait ProviderTraits {
 
 #[doc(hidden)]
 pub trait EventWriter<OutMode: OutputMode> {
-    fn span_start<'a, 'b>(
+    fn span_start(
         self: Pin<&Self>,
         data: crate::layer::common::SpanRef,
         keyword: u64,
         event_tag: u32,
     );
 
-    fn span_stop<'a, 'b>(
+    fn span_stop(
         self: Pin<&Self>,
         start_stop_times: (std::time::SystemTime, std::time::SystemTime),
         data: crate::layer::common::SpanRef,

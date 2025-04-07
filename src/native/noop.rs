@@ -44,7 +44,7 @@ impl<Mode: OutputMode> crate::native::ProviderTraits for Provider<Mode> {
 }
 
 impl<OutMode: OutputMode> crate::native::EventWriter<OutMode> for Provider<OutMode> {
-    fn span_start<'a, 'b>(
+    fn span_start(
         self: Pin<&Self>,
         _data: crate::layer::common::SpanRef,
         _keyword: u64,
@@ -52,7 +52,7 @@ impl<OutMode: OutputMode> crate::native::EventWriter<OutMode> for Provider<OutMo
     ) {
     }
 
-    fn span_stop<'a, 'b>(
+    fn span_stop(
         self: Pin<&Self>,
         _start_stop_times: (std::time::SystemTime, std::time::SystemTime),
         _data: crate::layer::common::SpanRef,

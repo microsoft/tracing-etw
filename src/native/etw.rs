@@ -177,7 +177,7 @@ impl<Mode: OutputMode> Provider<Mode> {
 }
 
 impl<Mode: OutputMode> super::EventWriter<NormalOutput> for Provider<Mode> {
-    fn span_start<'a, 'b>(
+    fn span_start(
         self: Pin<&Self>,
         data: crate::layer::common::SpanRef,
         keyword: u64,
@@ -227,7 +227,7 @@ impl<Mode: OutputMode> super::EventWriter<NormalOutput> for Provider<Mode> {
         });
     }
 
-    fn span_stop<'a, 'b>(
+    fn span_stop(
         self: Pin<&Self>,
         start_stop_times: (std::time::SystemTime, std::time::SystemTime),
         data: crate::layer::common::SpanRef,
@@ -371,7 +371,7 @@ impl AddFieldAndValue for CommonSchemaPartCBuilder<'_> {
 }
 
 impl<Mode: OutputMode> super::EventWriter<CommonSchemaOutput> for Provider<Mode> {
-    fn span_start<'a, 'b>(
+    fn span_start(
         self: Pin<&Self>,
         _data: crate::layer::common::SpanRef,
         _keyword: u64,
@@ -379,7 +379,7 @@ impl<Mode: OutputMode> super::EventWriter<CommonSchemaOutput> for Provider<Mode>
     ) {
     }
 
-    fn span_stop<'a, 'b>(
+    fn span_stop(
         self: Pin<&Self>,
         start_stop_times: (std::time::SystemTime, std::time::SystemTime),
         data: crate::layer::common::SpanRef,

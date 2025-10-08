@@ -1,6 +1,6 @@
 [package]
 name = "tracing-etw"
-version = "0.2.1"
+version = "0.2.2"
 edition = "2021"
 resolver = "2"
 license = "MIT"
@@ -39,7 +39,7 @@ tracing = {version = "0.1", default-features = false, features = ["std", "attrib
 tracing-subscriber = {version="0.3", default-features = false, features=["std", "fmt", "registry"]}
 
 [target.'cfg(windows)'.dev-dependencies]
-windows = {version="0.58", features=["Win32_System_Diagnostics_Etw", "Win32_Foundation", "Win32_System_Time"]}
+windows = {version="0.62", features=["Win32_System_Diagnostics_Etw", "Win32_Foundation", "Win32_System_Time"]}
 #etw_helpers = {version="0.1", path="../etw_helpers"}
 
 [[bench]]

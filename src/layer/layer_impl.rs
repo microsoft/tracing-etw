@@ -116,7 +116,7 @@ where
         let current_span = ctx
             .event_span(event)
             .map(|evt| evt.id())
-            .map_or(0, |id| (id.into_u64()));
+            .map_or(0, |id| id.into_u64());
         let parent_span = ctx
             .event_span(event)
             .map_or(0, |evt| evt.parent().map_or(0, |p| p.id().into_u64()));

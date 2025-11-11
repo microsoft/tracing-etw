@@ -5,11 +5,13 @@ use tracing::field;
 use crate::values::*;
 
 // Implemented on the EventBuilder types
+#[allow(dead_code)]
 pub(crate) trait AddFieldAndValue {
     fn add_field_value(&mut self, fv: &crate::values::FieldAndValue);
 }
 
 // We need a wrapper because we cannot implement an external trait (field::Visit) on an external type (EventBuilder)
+#[allow(dead_code)]
 pub(crate) struct EventBuilderVisitorWrapper<T: AddFieldAndValue> {
     wrapped: T,
 }

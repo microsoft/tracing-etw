@@ -73,6 +73,7 @@ impl From<char> for ValueTypes {
     }
 }
 
+#[allow(dead_code)]
 pub(crate) struct FieldAndValue<'a> {
     #[allow(dead_code)]
     pub(crate) field_name: &'static str,

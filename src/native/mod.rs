@@ -170,5 +170,6 @@ pub trait EventWriter<OutMode: OutputMode> {
         keyword: u64,
         event_tag: u32,
         event: &tracing::Event<'_>,
+        otel_context: Option<([u8; 32], [u8; 16])>, // (trace_id, span_id) when opentelemetry feature is enabled
     );
 }

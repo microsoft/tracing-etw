@@ -5,9 +5,7 @@ use crate::{
     values::{event_values::*, *},
 };
 use chrono::{Datelike, Timelike};
-use std::io::{Cursor, Write};
 use std::marker::PhantomData;
-use std::mem::MaybeUninit;
 use std::{cell::RefCell, ops::DerefMut, pin::Pin, sync::Arc, time::SystemTime};
 use tracelogging::*;
 use tracelogging_dynamic::EventBuilder;
@@ -299,6 +297,7 @@ impl<Mode: OutputMode> super::EventWriter<NormalOutput> for Provider<Mode> {
         keyword: u64,
         event_tag: u32,
         event: &tracing::Event<'_>,
+        _otel_context: Option<([u8; 32], [u8; 16])>,
     ) {
         let mut activity_id: [u8; 16] = *GLOBAL_ACTIVITY_SEED;
         activity_id[0] = if current_span != 0 {
@@ -414,11 +413,33 @@ impl<Mode: OutputMode> super::EventWriter<CommonSchemaOutput> for Provider<Mode>
     {
         let span_name = span.name();
 
-        let span_id = unsafe {
-            let mut span_id = MaybeUninit::<[u8; 16]>::uninit();
-            let mut cur = Cursor::new((*span_id.as_mut_ptr()).as_mut_slice());
-            write!(&mut cur, "{:16x}", span.id().into_u64()).expect("!write");
-            span_id.assume_init()
+        // Extract trace_id and span_id - prefer OpenTelemetry context when available
+        #[cfg(feature = "opentelemetry")]
+        let (trace_id, span_id) = {
+            let otel_ctx = crate::otel::extract_otel_context(span);
+            if otel_ctx.is_valid {
+                (otel_ctx.trace_id, otel_ctx.span_id)
+            } else {
+                // Fall back to local tracing span ID
+                let mut span_id_buf = [0u8; 16];
+                let trace_id_buf = [0u8; 32];
+                let _ = std::io::Write::write_fmt(
+                    &mut span_id_buf.as_mut_slice(),
+                    format_args!("{:016x}", span.id().into_u64()),
+                );
+                (trace_id_buf, span_id_buf)
+            }
+        };
+
+        #[cfg(not(feature = "opentelemetry"))]
+        let (trace_id, span_id) = {
+            let mut span_id_buf = [0u8; 16];
+            let trace_id_buf = [0u8; 32];
+            let _ = std::io::Write::write_fmt(
+                &mut span_id_buf.as_mut_slice(),
+                format_args!("{:016x}", span.id().into_u64()),
+            );
+            (trace_id_buf, span_id_buf)
         };
 
         EBW.with(|eb| {
@@ -441,7 +462,7 @@ impl<Mode: OutputMode> super::EventWriter<CommonSchemaOutput> for Provider<Mode>
 
                 eb.add_struct("ext_dt", 2, 0);
                 {
-                    eb.add_str8("traceId", "", OutType::Utf8, 0); // TODO
+                    eb.add_str8("traceId", trace_id, OutType::Utf8, 0);
                     eb.add_str8("spanId", span_id, OutType::Utf8, 0);
                 }
             }
@@ -465,11 +486,30 @@ impl<Mode: OutputMode> super::EventWriter<CommonSchemaOutput> for Provider<Mode>
                 eb.add_str8("_typeName", "Span", OutType::Utf8, 0);
 
                 if let Some(parent) = span_parent {
-                    let parent_span_id = unsafe {
-                        let mut span_id = MaybeUninit::<[u8; 16]>::uninit();
-                        let mut cur = Cursor::new((*span_id.as_mut_ptr()).as_mut_slice());
-                        write!(&mut cur, "{:16x}", parent.id().into_u64()).expect("!write");
-                        span_id.assume_init()
+                    // Extract parent span_id - prefer OpenTelemetry context when available
+                    #[cfg(feature = "opentelemetry")]
+                    let parent_span_id = {
+                        let otel_ctx = crate::otel::extract_otel_context(&parent);
+                        if otel_ctx.is_valid {
+                            otel_ctx.span_id
+                        } else {
+                            let mut buf = [0u8; 16];
+                            let _ = std::io::Write::write_fmt(
+                                &mut buf.as_mut_slice(),
+                                format_args!("{:016x}", parent.id().into_u64()),
+                            );
+                            buf
+                        }
+                    };
+
+                    #[cfg(not(feature = "opentelemetry"))]
+                    let parent_span_id = {
+                        let mut buf = [0u8; 16];
+                        let _ = std::io::Write::write_fmt(
+                            &mut buf.as_mut_slice(),
+                            format_args!("{:016x}", parent.id().into_u64()),
+                        );
+                        buf
                     };
 
                     eb.add_str8("parentId", parent_span_id, OutType::Utf8, 0);
@@ -518,6 +558,7 @@ impl<Mode: OutputMode> super::EventWriter<CommonSchemaOutput> for Provider<Mode>
         keyword: u64,
         event_tag: u32,
         event: &tracing::Event<'_>,
+        otel_context: Option<([u8; 32], [u8; 16])>,
     ) {
         EBW.with(|eb| {
             let mut eb = eb.borrow_mut();
@@ -532,7 +573,7 @@ impl<Mode: OutputMode> super::EventWriter<CommonSchemaOutput> for Provider<Mode>
             eb.add_u16("__csver__", 0x0401, OutType::Signed, 0);
             eb.add_struct(
                 "PartA",
-                1 + if current_span != 0 { 1 } else { 0 }, /* + exts.len() as u8*/
+                1 + if current_span != 0 || otel_context.is_some() { 1 } else { 0 }, /* + exts.len() as u8*/
                 0,
             );
             {
@@ -540,18 +581,24 @@ impl<Mode: OutputMode> super::EventWriter<CommonSchemaOutput> for Provider<Mode>
                     chrono::DateTime::to_rfc3339(&chrono::DateTime::<chrono::Utc>::from(timestamp));
                 eb.add_str8("time", time, OutType::Utf8, 0);
 
-                if current_span != 0 {
+                // Use OTel context if available, otherwise fall back to local span ID
+                if let Some((trace_id, span_id)) = otel_context {
                     eb.add_struct("ext_dt", 2, 0);
                     {
-                        let span_id = unsafe {
-                            let mut span_id = MaybeUninit::<[u8; 16]>::uninit();
-                            let mut cur = Cursor::new((*span_id.as_mut_ptr()).as_mut_slice());
-                            write!(&mut cur, "{:16x}", current_span).expect("!write");
-                            span_id.assume_init()
-                        };
-
-                        eb.add_str8("traceId", "", OutType::Utf8, 0); // TODO
+                        eb.add_str8("traceId", trace_id, OutType::Utf8, 0);
                         eb.add_str8("spanId", span_id, OutType::Utf8, 0);
+                    }
+                } else if current_span != 0 {
+                    eb.add_struct("ext_dt", 2, 0);
+                    {
+                        let mut span_id_buf = [0u8; 16];
+                        let _ = std::io::Write::write_fmt(
+                            &mut span_id_buf.as_mut_slice(),
+                            format_args!("{:016x}", current_span),
+                        );
+
+                        eb.add_str8("traceId", [0u8; 32], OutType::Utf8, 0);
+                        eb.add_str8("spanId", span_id_buf, OutType::Utf8, 0);
                     }
                 }
             }

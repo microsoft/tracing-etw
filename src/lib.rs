@@ -195,6 +195,11 @@ mod values;
 pub mod _details;
 pub mod error;
 
+// OpenTelemetry integration module - only available with the "opentelemetry" feature
+#[cfg(feature = "opentelemetry")]
+#[cfg_attr(docsrs, doc(cfg(feature = "opentelemetry")))]
+pub(crate) mod otel;
+
 pub use layer_builder::LayerBuilder;
 
 mod layer;

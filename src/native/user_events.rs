@@ -8,9 +8,7 @@ use eventheader::*;
 use eventheader_dynamic::EventBuilder;
 use std::{
     cell::RefCell,
-    io::{Cursor, Write},
     marker::PhantomData,
-    mem::MaybeUninit,
     ops::DerefMut,
     pin::Pin,
     sync::Arc,

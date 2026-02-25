@@ -108,11 +108,11 @@
 //! to consumers asynchronously per the platform design.
 //!
 //! ### Heap Allocations
-//! 
+//!
 //! The goal of this crate is to have no heap allocations in the hot path (when an event is logged).
 //! Currently there are a few circumstances when logging an event requires a heap
 //! allocation, outlined below.
-//! 
+//!
 //! Total memory usage by this crate will vary based on workload, but will usually
 //! stay in the 10s or low 100s of kilobytes, and should remain stable once the
 //! first event has been logged.
@@ -122,14 +122,14 @@
 //!
 //! - Logging events with the [Debug][std::fmt::Debug] format specifier (`:?`) will
 //! necessitate a heap allocation to format the value into a string.
-//! 
+//!
 //! <div class="warning">
-//! 
+//!
 //! All event messages (the format strings to the event) are, for reasons
 //! outside of the control of this crate, formatted as debug formats rather than as
 //! a string. This effectively means every single event is forced to perform at least
 //! one heap allocation. In benchmarking, this does not seem to be a major performance issue.
-//! 
+//!
 //! </div>
 //!
 //! - Logging strings copies them to the heap first. This is a side-effect of how
@@ -365,6 +365,17 @@ macro_rules! etw_event {
     );
     (name: $name:expr, $lvl:expr, $kw:expr, $($k:ident).+) => (
         $crate::etw_event!(name: $name, $lvl, $kw, 0, $($k).+,)
+    );
+    // Handle bare message string: etw_event!(name: "Name", Level::INFO, 1, "message")
+    (name: $name:expr, $lvl:expr, $kw:expr, $msg:literal) => (
+        $crate::etw_event!(
+            target: module_path!(),
+            name: $name,
+            $lvl,
+            $kw,
+            0,
+            { message = $msg }
+        )
     );
     (name: $name:expr, $lvl:expr, $kw:expr, $($arg:tt)+ ) => (
         $crate::etw_event!(target: module_path!(), name: $name, $lvl, $kw, 0, { $($arg)+ })

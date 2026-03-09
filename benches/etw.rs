@@ -127,9 +127,7 @@ pub fn etw_benchmark(c: &mut Criterion) {
                     name: "evtname",
                     Level::INFO,
                     1,
-                    field1 = 1,
-                    field2 = "asdf",
-                    field3 = 1.1,
+                    { field1 = 1, field2 = "asdf", field3 = 1.1 },
                     "Enabled event!"
                 );
             })

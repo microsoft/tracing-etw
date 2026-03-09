@@ -6,6 +6,8 @@ on:
   pull_request:
     branches: [ "main" ]
 
+permissions: read-all
+
 env:
   CARGO_TERM_COLOR: always
   CARGO_INCREMENTAL: 0
@@ -26,6 +28,8 @@ jobs:
             ~/.cargo/git/db/
             target/
         key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
+    - name: Output rust version for educational purposes
+      run: rustup --version
     - name: Build
       run: cargo build --verbose
     - name: Run tests
@@ -35,6 +39,8 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v3
+      - name: Output rust version for educational purposes
+        run: rustup --version
       - name: Build
         run: cargo build --verbose
       - name: Run tests

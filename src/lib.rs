@@ -196,6 +196,11 @@ mod values;
 pub mod _details;
 pub mod error;
 
+// OpenTelemetry integration module - only available with the "opentelemetry" feature
+#[cfg(feature = "opentelemetry")]
+#[cfg_attr(docsrs, doc(cfg(feature = "opentelemetry")))]
+pub(crate) mod otel;
+
 pub use layer_builder::LayerBuilder;
 
 mod layer;
@@ -361,6 +366,17 @@ macro_rules! etw_event {
     );
     (name: $name:expr, $lvl:expr, $kw:expr, $($k:ident).+) => (
         $crate::etw_event!(name: $name, $lvl, $kw, 0, $($k).+,)
+    );
+    // Handle bare message string: etw_event!(name: "Name", Level::INFO, 1, "message")
+    (name: $name:expr, $lvl:expr, $kw:expr, $msg:literal) => (
+        $crate::etw_event!(
+            target: module_path!(),
+            name: $name,
+            $lvl,
+            $kw,
+            0,
+            { message = $msg }
+        )
     );
     (name: $name:expr, $lvl:expr, $kw:expr, $($arg:tt)+ ) => (
         $crate::etw_event!(target: module_path!(), name: $name, $lvl, $kw, 0, { $($arg)+ })

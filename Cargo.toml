@@ -1,6 +1,6 @@
 [package]
 name = "tracing-etw"
-version = "0.2.1"
+version = "0.3.0"
 edition = "2024"
 resolver = "2"
 license = "MIT"
@@ -14,8 +14,11 @@ crate-type = ["rlib"]
 doctest = false
 
 [features]
-default = ["std"]
+default = ["std", "opentelemetry"]
 std = ["tracing-subscriber/registry", "tracing/std"]
+# Enable OpenTelemetry trace context extraction. When enabled, span_id and trace_id
+# will be extracted from tracing-opentelemetry's OtelData span extensions when available.
+opentelemetry = ["dep:tracing-opentelemetry", "dep:opentelemetry", "std", "tracing-subscriber/registry"]
 
 [dependencies]
 tracing = {version = "0.1", default-features = false}
@@ -27,13 +30,17 @@ thiserror = {version="2", default-features = false}
 hashers = "1"
 hashbrown = "0.15"
 
+# Optional OpenTelemetry dependencies
+tracing-opentelemetry = {version = "0.32", optional = true}
+opentelemetry = {version = "0.31", optional = true, default-features = false, features = ["trace"]}
+
 [target.'cfg(not(target_os = "linux"))'.dependencies]
 tracelogging = ">= 1.2.0"
 tracelogging_dynamic = ">= 1.2.0"
 
 [target.'cfg(target_os = "linux")'.dependencies]
-eventheader = ">= 0.4"
-eventheader_dynamic = ">= 0.4"
+eventheader = ">= 0.5"
+eventheader_dynamic = ">= 0.5"
 
 [dev-dependencies]
 criterion = {version="0.5", features=["html_reports"]}
@@ -41,7 +48,7 @@ tracing = {version = "0.1", default-features = false, features = ["std", "attrib
 tracing-subscriber = {version="0.3", default-features = false, features=["std", "fmt", "registry"]}
 
 [target.'cfg(windows)'.dev-dependencies]
-windows = {version="0.58", features=["Win32_System_Diagnostics_Etw", "Win32_Foundation", "Win32_System_Time"]}
+windows = {version="0.62", features=["Win32_System_Diagnostics_Etw", "Win32_Foundation", "Win32_System_Time"]}
 #etw_helpers = {version="0.1", path="../etw_helpers"}
 
 [[bench]]

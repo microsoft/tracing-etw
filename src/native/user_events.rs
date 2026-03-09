@@ -306,6 +306,7 @@ impl<Mode: OutputMode> super::EventWriter<NormalOutput> for Provider<Mode> {
         keyword: u64,
         event_tag: u32,
         event: &tracing::Event<'_>,
+        _otel_context: Option<([u8; 32], [u8; 16])>,
     ) {
         let es = if let Some(es) = self.find_set(Self::map_level(level), keyword) {
             es
@@ -412,9 +413,6 @@ impl<Mode: OutputMode> super::EventWriter<CommonSchemaOutput> for Provider<Mode>
         keyword: u64,
         event_tag: u32,
     ) {
-        // We need a UTF-8 rather than raw bytes, so we can't use data.activity_id() here
-        let span_id = super::to_hex_utf8_bytes(data.id());
-
         let es = if let Some(es) = self.find_set(Self::map_level(&data.level()), keyword) {
             es
         } else {
@@ -439,8 +437,8 @@ impl<Mode: OutputMode> super::EventWriter<CommonSchemaOutput> for Provider<Mode>
 
                 eb.add_struct("ext_dt", 2, 0);
                 {
-                    eb.add_str("traceId", "", FieldFormat::Default, 0); // TODO
-                    eb.add_str("spanId", span_id, FieldFormat::Default, 0);
+                    eb.add_str("traceId", data.span_strings().trace_id, FieldFormat::Default, 0);
+                    eb.add_str("spanId", data.span_strings().span_id, FieldFormat::Default, 0);
                 }
             }
 
@@ -455,17 +453,16 @@ impl<Mode: OutputMode> super::EventWriter<CommonSchemaOutput> for Provider<Mode>
             //     }
             // }
 
-            let parent_span = data.parent();
-            let partb_field_count = 3 + if parent_span.is_some() { 1 } else { 0 };
+            let partb_field_count = 3 + if data.span_strings().parent_span_id().is_some() { 1 } else { 0 };
 
             eb.add_struct("PartB", partb_field_count, 0);
             {
                 eb.add_str("_typeName", "Span", FieldFormat::Default, 0);
 
-                if let Some(id) = parent_span {
+                if let Some(pid) = data.span_strings().parent_span_id() {
                     eb.add_str(
                         "parentId",
-                        super::to_hex_utf8_bytes(id),
+                        pid,
                         FieldFormat::Default,
                         0,
                     );
@@ -514,6 +511,7 @@ impl<Mode: OutputMode> super::EventWriter<CommonSchemaOutput> for Provider<Mode>
         keyword: u64,
         event_tag: u32,
         event: &tracing::Event<'_>,
+        otel_context: Option<([u8; 32], [u8; 16])>,
     ) {
         let es = if let Some(es) = self.find_set(Self::map_level(level), keyword) {
             es
@@ -532,7 +530,7 @@ impl<Mode: OutputMode> super::EventWriter<CommonSchemaOutput> for Provider<Mode>
             eb.add_value("__csver__", 0x0401, FieldFormat::SignedInt, 0);
             eb.add_struct(
                 "PartA",
-                1 + if current_span != 0 { 1 } else { 0 }, /* + exts.len() as u8*/
+                1 + if current_span != 0 || otel_context.is_some() { 1 } else { 0 }, /* + exts.len() as u8*/
                 0,
             );
             {
@@ -540,7 +538,8 @@ impl<Mode: OutputMode> super::EventWriter<CommonSchemaOutput> for Provider<Mode>
                     chrono::DateTime::to_rfc3339(&chrono::DateTime::<chrono::Utc>::from(timestamp));
                 eb.add_str("time", time, FieldFormat::Default, 0);
 
-                if current_span != 0 {
+                // Use OTel context if available, otherwise fall back to local span ID
+                if let Some((trace_id, span_id)) = otel_context {
                     eb.add_struct("ext_dt", 2, 0);
                     {
                         eb.add_str("traceId", "", FieldFormat::Default, 0); // TODO
@@ -550,6 +549,18 @@ impl<Mode: OutputMode> super::EventWriter<CommonSchemaOutput> for Provider<Mode>
                             FieldFormat::Default,
                             0,
                         );
+                    }
+                } else if current_span != 0 {
+                    eb.add_struct("ext_dt", 2, 0);
+                    {
+                        let mut span_id_buf = [0u8; 16];
+                        let _ = std::io::Write::write_fmt(
+                            &mut span_id_buf.as_mut_slice(),
+                            format_args!("{:016x}", current_span),
+                        );
+
+                        eb.add_str("traceId", [0u8; 32], FieldFormat::Default, 0);
+                        eb.add_str("spanId", span_id_buf, FieldFormat::Default, 0);
                     }
                 }
             }

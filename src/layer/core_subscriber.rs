@@ -6,6 +6,9 @@ use super::*;
 
 static CURRENT_SPAN_ID: AtomicU64 = AtomicU64::new(1);
 
+// TODO: Locks
+//static TRACKED_SPANS: alloc::collections::VecDeque<tracing_core::span::Id> = alloc::collections::VecDeque::new();
+
 impl<OutMode: OutputMode + 'static> tracing::Subscriber for _EtwTracingSubscriber<OutMode>
 where
     crate::native::Provider<OutMode>: crate::native::EventWriter<OutMode>,
@@ -61,6 +64,15 @@ where
         common::release_span(&id)
     }
 
+    fn current_span(&self) -> tracing_core::span::Current {
+        // SAFETY: We ensure that the CURRENT_SPAN_ID is always a valid non-zero ID, so this should always be safe.
+        unsafe {
+            tracing_core::span::Current::new(tracing::span::Id::from_non_zero_u64(
+                core::num::NonZero::new_unchecked(
+                    CURRENT_SPAN_ID.load(core::sync::atomic::Ordering::Relaxed))), )
+        }
+    }
+
     fn record(&self, id: &tracing_core::span::Id, values: &tracing_core::span::Record<'_>) {
         common::update_span_values(id, values)
     }
@@ -81,18 +93,22 @@ where
             (event.metadata().name(), self.default_keyword, 0)
         };
 
-        common::write_event(self.provider.as_ref(), event, name, keyword, tag)
+        // if event.is_contextual() {
+        //     event.parent()
+        // }
+
+        common::write_event(self.provider.as_ref(), event, name, keyword, tag, None)
     }
 
     fn enter(&self, id: &tracing_core::span::Id) {
         // Spans don't have callsites to store keyword/tag metadata on,
         // so we must use the defaults.
-        common::enter_span(id, self.provider.as_ref(), self.default_keyword, 0)
+        common::enter_span(id, self.provider.as_ref(), self.default_keyword, 0, None);
     }
 
     fn exit(&self, id: &tracing_core::span::Id) {
         // Spans don't have callsites to store keyword/tag metadata on,
         // so we must use the defaults.
-        common::exit_span(id, self.provider.as_ref(), self.default_keyword, 0);
+        common::exit_span(id, self.provider.as_ref(), self.default_keyword, 0, None);
     }
 }

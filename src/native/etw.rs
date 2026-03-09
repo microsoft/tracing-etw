@@ -8,9 +8,10 @@ use tracelogging_dynamic::EventBuilder;
 
 use crate::{
     error::EtwError,
+    layer::common::SpanStrings,
     native::{CommonSchemaOutput, NormalOutput, OutputMode},
     statics::GLOBAL_ACTIVITY_SEED,
-    values::{event_values::*, *},
+    values::{event_values::*, *}
 };
 
 // Items within this .rdata section will be sorted alphabetically, thus the start is named with "0", the end "9", and each metadata "5".
@@ -281,13 +282,12 @@ impl<Mode: OutputMode> super::EventWriter<NormalOutput> for Provider<Mode> {
     fn write_record(
         self: Pin<&Self>,
         timestamp: std::time::SystemTime,
-        current_span: u64,
-        parent_span: u64,
         event_name: &str,
         level: &tracing_core::Level,
         keyword: u64,
         event_tag: u32,
         event: &tracing::Event<'_>,
+        span_strings: Option<SpanStrings>,
     ) {
         let mut activity_id: [u8; 16] = *GLOBAL_ACTIVITY_SEED;
         activity_id[0] = if current_span != 0 {
@@ -386,9 +386,6 @@ impl<Mode: OutputMode> super::EventWriter<CommonSchemaOutput> for Provider<Mode>
         keyword: u64,
         event_tag: u32,
     ) {
-        // We need a UTF-8 rather than raw bytes, so we can't use data.activity_id() here
-        let span_id = super::to_hex_utf8_bytes(data.id());
-
         EBW.with_borrow_mut(|mut eb| {
             eb.reset(
                 data.name(),
@@ -412,8 +409,8 @@ impl<Mode: OutputMode> super::EventWriter<CommonSchemaOutput> for Provider<Mode>
 
                 eb.add_struct("ext_dt", 2, 0);
                 {
-                    eb.add_str8("traceId", "", OutType::Utf8, 0); // TODO
-                    eb.add_str8("spanId", span_id, OutType::Utf8, 0);
+                    eb.add_str8("traceId", data.span_strings().trace_id, OutType::Utf8, 0);
+                    eb.add_str8("spanId", data.span_strings().span_id, OutType::Utf8, 0);
                 }
             }
 
@@ -428,15 +425,14 @@ impl<Mode: OutputMode> super::EventWriter<CommonSchemaOutput> for Provider<Mode>
             //     }
             // }
 
-            let parent_span = data.parent();
-            let partb_field_count = 3 + if parent_span.is_some() { 1 } else { 0 };
+            let partb_field_count = 3 + if data.span_strings().parent_span_id().is_some() { 1 } else { 0 };
 
             eb.add_struct("PartB", partb_field_count, 0);
             {
                 eb.add_str8("_typeName", "Span", OutType::Utf8, 0);
 
-                if let Some(id) = parent_span {
-                    eb.add_str8("parentId", super::to_hex_utf8_bytes(id), OutType::Utf8, 0);
+                if let Some(pid) = data.span_strings().parent_span_id() {
+                    eb.add_str8("parentId", pid, OutType::Utf8, 0);
                 }
 
                 eb.add_str8("name", data.name(), OutType::Utf8, 0);
@@ -475,13 +471,12 @@ impl<Mode: OutputMode> super::EventWriter<CommonSchemaOutput> for Provider<Mode>
     fn write_record(
         self: Pin<&Self>,
         timestamp: std::time::SystemTime,
-        current_span: u64,
-        _parent_span: u64,
         event_name: &str,
         level: &tracing_core::Level,
         keyword: u64,
         event_tag: u32,
         event: &tracing::Event<'_>,
+        span_strings: Option<SpanStrings>,
     ) {
         EBW.with_borrow_mut(|mut eb| {
             eb.reset(event_name, Self::map_level(level), keyword, event_tag);
@@ -494,7 +489,7 @@ impl<Mode: OutputMode> super::EventWriter<CommonSchemaOutput> for Provider<Mode>
             eb.add_u16("__csver__", 0x0401, OutType::Signed, 0);
             eb.add_struct(
                 "PartA",
-                1 + if current_span != 0 { 1 } else { 0 }, /* + exts.len() as u8*/
+                1 + if span_strings.is_some() { 1 } else { 0 }, /* + exts.len() as u8*/
                 0,
             );
             {
@@ -502,16 +497,11 @@ impl<Mode: OutputMode> super::EventWriter<CommonSchemaOutput> for Provider<Mode>
                     chrono::DateTime::to_rfc3339(&chrono::DateTime::<chrono::Utc>::from(timestamp));
                 eb.add_str8("time", time, OutType::Utf8, 0);
 
-                if current_span != 0 {
+                if let Some(span_strings) = span_strings {
                     eb.add_struct("ext_dt", 2, 0);
                     {
-                        eb.add_str8("traceId", "", OutType::Utf8, 0); // TODO
-                        eb.add_str8(
-                            "spanId",
-                            super::to_hex_utf8_bytes(current_span),
-                            OutType::Utf8,
-                            0,
-                        );
+                        eb.add_str8("traceId", span_strings.trace_id, OutType::Utf8, 0);
+                        eb.add_str8("spanId", span_strings.span_id, OutType::Utf8, 0);
                     }
                 }
             }

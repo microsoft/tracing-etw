@@ -71,6 +71,7 @@ impl<OutMode: OutputMode> crate::native::EventWriter<OutMode> for Provider<OutMo
         _keyword: u64,
         _event_tag: u32,
         _event: &tracing::Event<'_>,
+        _otel_context: Option<([u8; 32], [u8; 16])>,
     ) {
     }
 }

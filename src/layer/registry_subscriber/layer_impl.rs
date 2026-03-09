@@ -4,10 +4,27 @@ use tracing_core::{callsite, span};
 use tracing_subscriber::registry::LookupSpan;
 
 use crate::{
-    layer::{_EtwTracingSubscriber, common},
+    layer::{_EtwTracingSubscriber, common, common::SpanStrings},
     native::OutputMode,
     statics::*,
 };
+
+fn get_otel_span_strings<S>(span: Option<tracing_subscriber::registry::SpanRef<'_, S>>) -> Option<SpanStrings>
+where
+    S: Subscriber + for<'a> LookupSpan<'a>,
+{
+    span.and_then(|span| {
+        // Extract OpenTelemetry context if available
+        #[cfg(feature = "opentelemetry")]
+        {
+            crate::otel::get_otel_span_data(&span)
+        }
+        #[cfg(not(feature = "opentelemetry"))]
+        {
+            None
+        }
+    })
+}
 
 impl<OutMode: OutputMode + 'static, S> tracing_subscriber::Layer<S>
     for _EtwTracingSubscriber<OutMode, S>
@@ -26,7 +43,7 @@ where
     fn on_event(
         &self,
         event: &tracing::Event<'_>,
-        _ctx: tracing_subscriber::layer::Context<'_, S>,
+        ctx: tracing_subscriber::layer::Context<'_, S>,
     ) {
         let etw_meta = get_event_metadata(&event.metadata().callsite());
         let (name, keyword, tag) = if let Some(meta) = etw_meta {
@@ -35,7 +52,7 @@ where
             (event.metadata().name(), self.default_keyword, 0)
         };
 
-        common::write_event(self.provider.as_ref(), event, name, keyword, tag)
+        common::write_event(self.provider.as_ref(), event, name, keyword, tag, get_otel_span_strings(ctx.event_span(event)))
     }
 
     fn on_new_span(
@@ -44,19 +61,20 @@ where
         id: &span::Id,
         _ctx: tracing_subscriber::layer::Context<'_, S>,
     ) {
+        // We can't cache the otel spans here because we don't know which layer will see the span first
         common::create_span_data_for_new_span(attrs, id)
     }
 
-    fn on_enter(&self, id: &span::Id, _ctx: tracing_subscriber::layer::Context<'_, S>) {
+    fn on_enter(&self, id: &span::Id, ctx: tracing_subscriber::layer::Context<'_, S>) {
         // Spans don't have callsites to store keyword/tag metadata on,
         // so we must use the defaults.
-        common::enter_span(id, self.provider.as_ref(), self.default_keyword, 0)
+        common::enter_span(id, self.provider.as_ref(), self.default_keyword, 0, get_otel_span_strings(ctx.span(id)))
     }
 
-    fn on_exit(&self, id: &span::Id, _ctx: tracing_subscriber::layer::Context<'_, S>) {
+    fn on_exit(&self, id: &span::Id, ctx: tracing_subscriber::layer::Context<'_, S>) {
         // Spans don't have callsites to store keyword/tag metadata on,
         // so we must use the defaults.
-        common::exit_span(id, self.provider.as_ref(), self.default_keyword, 0)
+        common::exit_span(id, self.provider.as_ref(), self.default_keyword, 0, get_otel_span_strings(ctx.span(id)))
     }
 
     fn on_close(&self, id: span::Id, _ctx: tracing_subscriber::layer::Context<'_, S>) {

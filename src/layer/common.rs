@@ -47,15 +47,55 @@ impl BuildHasher for FNV1aHasher64HasherBuilder {
     }
 }
 
+pub(crate) struct SpanIds {
+    pub(crate) span_id: NonZeroU64,
+    pub(crate) parent_span_id: Option<NonZeroU64>, // sizeof(Option<NonZeroU64>) == sizeof(u64) is guaranteed by the standard
+}
+
+pub(crate) struct SpanStrings {
+    pub(crate) trace_id: [u8; 32], // UTF-8 hex bytes, only non-zero if the otel feature is enabled and the span has a valid trace ID
+    pub(crate) span_id: [u8; 16], // UTF-8 hex bytes, either the otel span ID if the otel feature is enabled, or the local span ID
+    pub(crate) parent_span_id: Option<[u8; 16]>, // UTF-8 hex bytes, only Some if the otel feature is enabled and the span has a valid parent span ID
+}
+
+impl SpanStrings {
+    pub(crate) fn build(span_data: &SpanData, otel_span_strings: Option<OtelSpanStrings>) -> SpanStrings
+    {
+        otel_span_strings.unwrap_or(
+        SpanStrings {
+            trace_id: [0; 32],
+            span_id: crate::native::to_hex_utf8_bytes(span_data.ids.span_id.into()),
+            parent_span_id: span_data.ids.parent_span_id.map(|pid| crate::native::to_hex_utf8_bytes(pid.into())),
+        })
+    }
+
+    pub(crate) fn trace_id(&self) -> &[u8; 32] {
+        &self.trace_id
+    }
+
+    pub(crate) fn span_id(&self) -> &[u8; 16] {
+        &self.span_id
+    }
+
+    pub(crate) fn parent_span_id(&self) -> Option<&[u8; 16]> {
+        self.parent_span_id.as_ref()
+    }
+}
+
+// Add an alias for "incomplete" strings, just for clarity.
+// This also makes it easier to completely exclude otel.rs when the feature is not enabled, without adding conditionals everywhere.
+// These strings come from Otel (if available), but do not yet have the missing values filled in from the SpanData.
+pub(crate) type OtelSpanStrings = SpanStrings;
+
 // Data created by this crate for a span.
 // Exists for the lifetime of the span.
 struct SpanData {
     fields: Box<[FieldValueIndex]>,
+    ids: SpanIds,
     activity_id: [u8; 16], // if set, byte 0 is 1 and 64-bit span ID in the lower 8 bytes
     related_activity_id: [u8; 16], // if set, byte 0 is 1 and 64-bit parent span ID in the lower 8 bytes
     start_time: std::time::SystemTime,
     name: &'static str,
-    parent_id: Option<NonZeroU64>, // sizeof(Option<NonZeroU64>) == sizeof(u64) is guaranteed by the standard
     level: tracing_core::Level,
     ref_count: AtomicUsize,
 }
@@ -64,17 +104,17 @@ struct SpanData {
 // Exists for the duration of the enter/exit call; short-lived.
 #[doc(hidden)]
 pub struct SpanRef<'a> {
-    id: NonZeroU64,
     data: &'a SpanData,
+    span_strings: SpanStrings,
 }
 
 impl SpanRef<'_> {
     pub(crate) fn id(&self) -> u64 {
-        self.id.into()
+        self.data.ids.span_id.into()
     }
 
     pub(crate) fn parent(&self) -> Option<u64> {
-        self.data.parent_id.map(|id| id.into())
+        self.data.ids.parent_span_id.map(|id| id.into())
     }
 
     pub(crate) fn name(&self) -> &'static str {
@@ -107,6 +147,10 @@ impl SpanRef<'_> {
 
     pub(crate) fn field_count(&self) -> usize {
         self.data.fields.len()
+    }
+
+    pub(crate) fn span_strings(&self) -> &SpanStrings {
+        &self.span_strings
     }
 }
 
@@ -155,7 +199,10 @@ pub(crate) fn create_span_data_for_new_span(
             related_activity_id: *GLOBAL_ACTIVITY_SEED,
             start_time: std::time::SystemTime::UNIX_EPOCH,
             name: metadata.name(),
-            parent_id: NonZeroU64::new(parent_span_id),
+            ids: SpanIds {
+                span_id: id.into_non_zero_u64(),
+                parent_span_id: NonZeroU64::new(parent_span_id),
+            },
             level: *metadata.level(),
             ref_count: AtomicUsize::new(1),
         }
@@ -227,6 +274,7 @@ pub(crate) fn enter_span<OutMode: OutputMode>(
     writer: Pin<&impl EventWriter<OutMode>>,
     keyword: u64,
     tag: u32,
+    otel_span_strings: Option<OtelSpanStrings>,
 ) {
     let timestamp = std::time::SystemTime::now();
 
@@ -247,8 +295,8 @@ pub(crate) fn enter_span<OutMode: OutputMode>(
 
     writer.span_start(
         SpanRef {
-            id: id.into_non_zero_u64(),
             data,
+            span_strings: SpanStrings::build(data, otel_span_strings),
         },
         keyword,
         tag,
@@ -260,6 +308,7 @@ pub(crate) fn exit_span<OutMode: OutputMode>(
     writer: Pin<&impl EventWriter<OutMode>>,
     keyword: u64,
     tag: u32,
+    otel_span_strings: Option<OtelSpanStrings>,
 ) {
     let stop_timestamp = std::time::SystemTime::now();
 
@@ -274,8 +323,8 @@ pub(crate) fn exit_span<OutMode: OutputMode>(
     writer.span_stop(
         (data.start_time, stop_timestamp),
         SpanRef {
-            id: id.into_non_zero_u64(),
             data,
+            span_strings: SpanStrings::build(data, otel_span_strings),
         },
         keyword,
         tag,
@@ -302,25 +351,25 @@ pub(crate) fn write_event<OutMode: OutputMode>(
     name: &str,
     keyword: u64,
     tag: u32,
+    _otel_span_strings: Option<OtelSpanStrings>,
 ) {
     let timestamp = std::time::SystemTime::now();
 
-    // let current_span = ctx
-    //     .event_span(event)
-    //     .map(|evt| evt.id())
-    //     .map_or(0, |id| (id.into_u64()));
-    // let parent_span = ctx
-    //     .event_span(event)
-    //     .map_or(0, |evt| evt.parent().map_or(0, |p| p.id().into_u64()));
+    let current_span = ctx
+        .event_span(event)
+        .map(|evt| evt.id())
+        .map_or(0, |id| (id.into_u64()));
+    let parent_span = ctx
+        .event_span(event)
+        .map_or(0, |evt| evt.parent().map_or(0, |p| p.id().into_u64()));
 
     writer.write_record(
         timestamp,
-        0, //current_span,
-        0, //parent_span,
         name,
         event.metadata().level(),
         keyword,
         tag,
         event,
+        None,
     );
 }

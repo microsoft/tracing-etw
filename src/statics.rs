@@ -1,13 +1,22 @@
 // Module for static variables that are used by the crate.
 
-use core::{cmp, hash::BuildHasher, iter::FusedIterator};
+use core::{cmp, iter::FusedIterator};
 use std::sync::LazyLock;
 extern crate alloc;
 use alloc::{boxed::Box, vec::Vec};
 
 use crate::_details::{EventMetadata, ParsedEventMetadata};
 
-type FnvHasher = core::hash::BuildHasherDefault<hashers::fnv::FNV1aHasher64>;
+// DOS resistance is not needed here.
+// Since we are computing hashes once to generate the static lookup array,
+// and then again every time an event is logged, we need the hashers
+// for each step to return identical values. Whether those values are predictable
+// or consistent across processes is unimportant.
+static HASHER: ahash::RandomState = ahash::RandomState::with_seeds(
+        17_616_942_133_695_121_499,
+        9_565_839_503_509_016_163,
+        2_756_528_679_765_226_774,
+        228_784_672_216_536_063);
 
 pub(crate) static GLOBAL_ACTIVITY_SEED: LazyLock<[u8; 16]> = LazyLock::new(|| {
     let now = std::time::SystemTime::now()
@@ -85,14 +94,12 @@ fn process_static_metadata() -> Box<[ParsedEventMetadata]> {
         next_pos += 1;
     }
 
-    let bh = FnvHasher::default();
-
     let mut vec = Vec::with_capacity(good_pos + 1);
     next_pos = 0;
     while next_pos <= good_pos {
         // SAFETY The above code as already validated that events_slice[0..good_pos] are non-null pointers
         let next = unsafe { &*events_slice[next_pos] };
-        let identity_hash = bh.hash_one(&next.identity);
+        let identity_hash = HASHER.hash_one(&next.identity);
         vec.push(ParsedEventMetadata {
             identity_hash,
             meta: next,
@@ -136,8 +143,7 @@ impl core::cmp::Ord for ParsedEventMetadata {
 pub(crate) fn get_event_metadata(
     id: &tracing::callsite::Identifier,
 ) -> Option<&'static crate::_details::EventMetadata> {
-    let bh = FnvHasher::default();
-    let identity_hash = bh.hash_one(id);
+    let identity_hash = HASHER.hash_one(id);
     let idx = EVENT_METADATA.partition_point(|other| other.identity_hash > identity_hash);
     let mut cur = idx;
     while cur < EVENT_METADATA.len() {

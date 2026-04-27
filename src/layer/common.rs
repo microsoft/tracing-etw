@@ -1,5 +1,4 @@
 use core::{
-    hash::{BuildHasher, Hash, Hasher},
     num::NonZeroU64,
     pin::Pin,
     sync::atomic::{AtomicUsize, Ordering},
@@ -9,7 +8,6 @@ use alloc::{boxed::Box, vec::Vec};
 use std::sync::RwLock;
 
 use hashbrown::HashMap;
-use hashers::fnv::FNV1aHasher64;
 
 use crate::{
     native::{EventWriter, OutputMode},
@@ -20,32 +18,13 @@ use crate::{
     },
 };
 
-static SPAN_DATA: RwLock<HashMap<tracing::span::Id, SpanData, FNV1aHasher64HasherBuilder>> =
-    RwLock::new(HashMap::with_hasher(FNV1aHasher64HasherBuilder::new()));
-
-struct FNV1aHasher64HasherBuilder {}
-impl FNV1aHasher64HasherBuilder {
-    const fn new() -> Self {
-        Self {}
-    }
-}
-
-impl BuildHasher for FNV1aHasher64HasherBuilder {
-    type Hasher = FNV1aHasher64;
-    fn build_hasher(&self) -> Self::Hasher {
-        FNV1aHasher64::default()
-    }
-
-    fn hash_one<T: Hash>(&self, x: T) -> u64
-    where
-        Self: Sized,
-        Self::Hasher: Hasher,
-    {
-        let mut hasher = FNV1aHasher64::default();
-        x.hash(&mut hasher);
-        hasher.finish()
-    }
-}
+// DOS resistance is not needed in this hash
+static SPAN_DATA: RwLock<HashMap<tracing::span::Id, SpanData, ahash::RandomState>> =
+    RwLock::new(HashMap::with_hasher(ahash::RandomState::with_seeds(
+        17_616_942_133_695_121_499,
+        9_565_839_503_509_016_163,
+        2_756_528_679_765_226_774,
+        228_784_672_216_536_063)));
 
 pub(crate) struct SpanIds {
     pub(crate) span_id: NonZeroU64,

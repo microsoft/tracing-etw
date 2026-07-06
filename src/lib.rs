@@ -267,12 +267,12 @@ macro_rules! etw_event {
                     CALLSITE,
                     &value_set
                 );
-            })(tracing::valueset!(CALLSITE.metadata().fields(), $($fields)*));
+            })(tracing::valueset_all!(CALLSITE.metadata().fields(), $($fields)*));
         } else {
             tracing::__tracing_log!(
                 $lvl,
-                CALLSITE,
-                &tracing::valueset!(CALLSITE.metadata().fields(), $($fields)*)
+                __CALLSITE,
+                &tracing::valueset_all!(CALLSITE.metadata().fields(), $($fields)*)
             );
         }
     });

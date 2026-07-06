@@ -116,7 +116,7 @@ where
         let current_span = ctx
             .event_span(event)
             .map(|evt| evt.id())
-            .map_or(0, |id| (id.into_u64()));
+            .map_or(0, |id| id.into_u64() );
         let parent_span = ctx
             .event_span(event)
             .map_or(0, |evt| evt.parent().map_or(0, |p| p.id().into_u64()));
@@ -129,7 +129,7 @@ where
         };
 
         self.layer.provider.as_ref().write_record(
-            timestamp,
+            timestamp.into(),
             current_span,
             parent_span,
             name,
@@ -248,7 +248,7 @@ where
 
         self.layer.provider.as_ref().span_start(
             &span,
-            timestamp,
+            timestamp.into(),
             &data.activity_id,
             &data.related_activity_id,
             &data.fields,
@@ -294,7 +294,7 @@ where
 
         self.layer.provider.as_ref().span_stop(
             &span,
-            (data.start_time, stop_timestamp),
+            (data.start_time.into(), stop_timestamp.into()),
             &data.activity_id,
             &data.related_activity_id,
             &data.fields,

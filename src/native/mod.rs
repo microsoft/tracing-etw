@@ -38,6 +38,9 @@ pub(crate) use eventheader::Guid as native_guid;
 #[cfg(not(target_os = "linux"))]
 pub(crate) use tracelogging_dynamic::Guid as native_guid;
 
+#[cfg(any(target_os = "windows", target_os = "linux"))]
+pub(crate) mod time;
+
 use crate::error::EtwError;
 
 #[doc(hidden)]
@@ -135,7 +138,7 @@ pub trait EventWriter<OutMode: OutputMode> {
     fn span_start<'a, 'b, R>(
         self: std::pin::Pin<&Self>,
         span: &'b tracing_subscriber::registry::SpanRef<'a, R>,
-        timestamp: std::time::SystemTime,
+        timestamp: time::CivilTime,
         activity_id: &[u8; 16],
         related_activity_id: &[u8; 16],
         fields: &'b [crate::values::span_values::FieldValueIndex],
@@ -149,7 +152,7 @@ pub trait EventWriter<OutMode: OutputMode> {
     fn span_stop<'a, 'b, R>(
         self: std::pin::Pin<&Self>,
         span: &'b tracing_subscriber::registry::SpanRef<'a, R>,
-        start_stop_times: (std::time::SystemTime, std::time::SystemTime),
+        start_stop_times: (time::CivilTime, time::CivilTime),
         activity_id: &[u8; 16],
         related_activity_id: &[u8; 16],
         fields: &'b [crate::values::span_values::FieldValueIndex],
@@ -162,7 +165,7 @@ pub trait EventWriter<OutMode: OutputMode> {
     #[allow(clippy::too_many_arguments)]
     fn write_record(
         self: std::pin::Pin<&Self>,
-        timestamp: std::time::SystemTime,
+        timestamp: time::CivilTime,
         current_span: u64,
         parent_span: u64,
         event_name: &str,

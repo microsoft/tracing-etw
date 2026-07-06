@@ -1,6 +1,6 @@
 use crate::{
     error::EtwError,
-    native::{CommonSchemaOutput, NormalOutput, OutputMode},
+    native::{time, CommonSchemaOutput, NormalOutput, OutputMode},
     statics::GLOBAL_ACTIVITY_SEED,
     values::{event_values::*, *},
 };
@@ -14,7 +14,6 @@ use std::{
     ops::DerefMut,
     pin::Pin,
     sync::Arc,
-    time::SystemTime,
 };
 use tracing_subscriber::registry::{LookupSpan, SpanRef};
 
@@ -197,7 +196,7 @@ impl<Mode: OutputMode> super::EventWriter<NormalOutput> for Provider<Mode> {
     fn span_start<'a, 'b, R>(
         self: Pin<&Self>,
         span: &'b SpanRef<'a, R>,
-        timestamp: SystemTime,
+        timestamp: time::CivilTime,
         activity_id: &[u8; 16],
         related_activity_id: &[u8; 16],
         fields: &'b [crate::values::span_values::FieldValueIndex],
@@ -260,7 +259,7 @@ impl<Mode: OutputMode> super::EventWriter<NormalOutput> for Provider<Mode> {
     fn span_stop<'a, 'b, R>(
         self: Pin<&Self>,
         span: &'b SpanRef<'a, R>,
-        start_stop_times: (std::time::SystemTime, std::time::SystemTime),
+        start_stop_times: (time::CivilTime, time::CivilTime),
         activity_id: &[u8; 16],
         related_activity_id: &[u8; 16],
         fields: &'b [crate::values::span_values::FieldValueIndex],
@@ -323,7 +322,7 @@ impl<Mode: OutputMode> super::EventWriter<NormalOutput> for Provider<Mode> {
 
     fn write_record(
         self: Pin<&Self>,
-        timestamp: SystemTime,
+        timestamp: time::CivilTime,
         current_span: u64,
         parent_span: u64,
         event_name: &str,
@@ -427,7 +426,7 @@ impl<Mode: OutputMode> super::EventWriter<CommonSchemaOutput> for Provider<Mode>
     fn span_start<'a, 'b, R>(
         self: Pin<&Self>,
         _span: &'b SpanRef<'a, R>,
-        _timestamp: SystemTime,
+        _timestamp: time::CivilTime,
         _activity_id: &[u8; 16],
         _related_activity_id: &[u8; 16],
         _fields: &'b [crate::values::span_values::FieldValueIndex],
@@ -442,7 +441,7 @@ impl<Mode: OutputMode> super::EventWriter<CommonSchemaOutput> for Provider<Mode>
     fn span_stop<'a, 'b, R>(
         self: Pin<&Self>,
         span: &'b SpanRef<'a, R>,
-        start_stop_times: (std::time::SystemTime, std::time::SystemTime),
+        start_stop_times: (time::CivilTime, time::CivilTime),
         _activity_id: &[u8; 16],
         _related_activity_id: &[u8; 16],
         fields: &'b [crate::values::span_values::FieldValueIndex],
@@ -480,9 +479,7 @@ impl<Mode: OutputMode> super::EventWriter<CommonSchemaOutput> for Provider<Mode>
             eb.add_value("__csver__", 0x0401, FieldFormat::SignedInt, 0);
             eb.add_struct("PartA", 2 /* + exts.len() as u8*/, 0);
             {
-                let time: String = chrono::DateTime::to_rfc3339(
-                    &chrono::DateTime::<chrono::Utc>::from(start_stop_times.1),
-                );
+                let time: String = time::to_rfc3339(start_stop_times.1);
                 eb.add_str("time", time, FieldFormat::Default, 0);
 
                 eb.add_struct("ext_dt", 2, 0);
@@ -525,9 +522,7 @@ impl<Mode: OutputMode> super::EventWriter<CommonSchemaOutput> for Provider<Mode>
 
                 eb.add_str(
                     "startTime",
-                    &chrono::DateTime::to_rfc3339(&chrono::DateTime::<chrono::Utc>::from(
-                        start_stop_times.0,
-                    )),
+                    &time::to_rfc3339(start_stop_times.0),
                     FieldFormat::Default,
                     0,
                 );
@@ -556,7 +551,7 @@ impl<Mode: OutputMode> super::EventWriter<CommonSchemaOutput> for Provider<Mode>
 
     fn write_record(
         self: Pin<&Self>,
-        timestamp: SystemTime,
+        timestamp: time::CivilTime,
         current_span: u64,
         _parent_span: u64,
         event_name: &str,
@@ -588,8 +583,7 @@ impl<Mode: OutputMode> super::EventWriter<CommonSchemaOutput> for Provider<Mode>
                 0,
             );
             {
-                let time: String =
-                    chrono::DateTime::to_rfc3339(&chrono::DateTime::<chrono::Utc>::from(timestamp));
+                let time: String = time::to_rfc3339(timestamp);
                 eb.add_str("time", time, FieldFormat::Default, 0);
 
                 if current_span != 0 {
@@ -615,9 +609,7 @@ impl<Mode: OutputMode> super::EventWriter<CommonSchemaOutput> for Provider<Mode>
 
                 eb.add_str(
                     "eventTime",
-                    &chrono::DateTime::to_rfc3339(&chrono::DateTime::<chrono::Utc>::from(
-                        timestamp,
-                    )),
+                    &time::to_rfc3339(timestamp),
                     FieldFormat::Default,
                     0,
                 );

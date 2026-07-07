@@ -222,10 +222,7 @@ impl<Mode: OutputMode> super::EventWriter<NormalOutput> for Provider<Mode> {
 
             eb.add_value(
                 "start time",
-                timestamp
-                    .duration_since(std::time::SystemTime::UNIX_EPOCH)
-                    .unwrap()
-                    .as_secs(),
+                timestamp.unix_seconds(),
                 FieldFormat::Time,
                 0,
             );
@@ -287,9 +284,7 @@ impl<Mode: OutputMode> super::EventWriter<NormalOutput> for Provider<Mode> {
                 "stop time",
                 start_stop_times
                     .1
-                    .duration_since(std::time::SystemTime::UNIX_EPOCH)
-                    .unwrap()
-                    .as_secs(),
+                    .unix_seconds(),
                 FieldFormat::Time,
                 0,
             );
@@ -363,10 +358,7 @@ impl<Mode: OutputMode> super::EventWriter<NormalOutput> for Provider<Mode> {
 
             eb.add_value(
                 "time",
-                timestamp
-                    .duration_since(std::time::SystemTime::UNIX_EPOCH)
-                    .unwrap()
-                    .as_secs(),
+                timestamp.unix_seconds(),
                 FieldFormat::Time,
                 0,
             );

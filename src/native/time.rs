@@ -50,6 +50,20 @@ impl CivilTime {
             nanosecond,
         }
     }
+
+    /// Returns the number of whole seconds between the Unix epoch
+    /// (1970-01-01T00:00:00 UTC) and this civil time, negative for times before
+    /// the epoch. This is the inverse of [`from_unix`](Self::from_unix); any
+    /// sub-second [`nanosecond`](Self#structfield.nanosecond) component is
+    /// truncated.
+    #[allow(dead_code)]
+    pub(crate) fn unix_seconds(&self) -> i64 {
+        let days = days_from_civil(self.year, self.month, self.day);
+        days * 86_400
+            + self.hour as i64 * 3_600
+            + self.minute as i64 * 60
+            + self.second as i64
+    }
 }
 
 impl From<SystemTime> for CivilTime {
@@ -192,6 +206,21 @@ fn civil_from_days(days: i64) -> (i64, u8, u8) {
     (year, month, day)
 }
 
+/// Converts a `(year, month, day)` civil date into a count of days since the
+/// Unix epoch (1970-01-01). Inverse of [`civil_from_days`], also from Howard
+/// Hinnant's algorithms.
+#[allow(dead_code)]
+fn days_from_civil(year: i64, month: u8, day: u8) -> i64 {
+    let m = month as i64;
+    let d = day as i64;
+    let y = if m <= 2 { year - 1 } else { year };
+    let era = if y >= 0 { y } else { y - 399 } / 400;
+    let yoe = y - era * 400; // [0, 399]
+    let doy = (153 * (if m > 2 { m - 3 } else { m + 9 }) + 2) / 5 + d - 1; // [0, 365]
+    let doe = yoe * 365 + yoe / 4 - yoe / 100 + doy; // [0, 146096]
+    era * 146_097 + doe - 719_468
+}
+
 /// Formats a [`SystemTime`] as an RFC 3339 / ISO 8601 string in UTC, e.g.
 /// `2024-01-02T03:04:05.123456789+00:00`.
 ///
@@ -285,6 +314,28 @@ mod tests {
             (ct.year, ct.month, ct.day, ct.hour, ct.minute, ct.second),
             (1969, 12, 31, 23, 59, 59)
         );
+    }
+
+    #[test]
+    fn unix_seconds_known_values() {
+        assert_eq!(CivilTime::from(UNIX_EPOCH).unix_seconds(), 0);
+        assert_eq!(at(1_704_164_645, 0).unix_seconds(), 1_704_164_645);
+        // Sub-second components are truncated, not rounded.
+        assert_eq!(at(1_704_164_645, 999_999_999).unix_seconds(), 1_704_164_645);
+    }
+
+    #[test]
+    fn unix_seconds_before_epoch() {
+        let ct = CivilTime::from(UNIX_EPOCH - Duration::new(1, 0));
+        assert_eq!(ct.unix_seconds(), -1);
+    }
+
+    #[test]
+    fn unix_seconds_round_trips() {
+        for secs in [0i64, 1, -1, 86_400, 1_582_977_600, 1_704_164_645, -62_135_596_800] {
+            let ct = CivilTime::from_unix(secs, 0);
+            assert_eq!(ct.unix_seconds(), secs);
+        }
     }
 
     #[cfg(target_os = "windows")]

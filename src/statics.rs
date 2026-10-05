@@ -41,12 +41,15 @@ fn process_static_metadata() -> Box<[ParsedEventMetadata]> {
     // so we can guarantee we aren't making a reference to null here.
     let events_slice = unsafe { &mut *core::ptr::slice_from_raw_parts_mut(start, stop_offset) };
 
-    if events_slice.is_empty() || events_slice[0].is_null() {
+    if events_slice.is_empty() {
         return Box::new([]);
     }
 
     // Sort spurious nulls to the end. This is comparing pointers as usize, not their pointed-to values.
     events_slice.sort_unstable_by(|a, b| b.cmp(a));
+    if events_slice[0].is_null() {
+        return Box::new([]);
+    }
 
     // Remove spurious duplicate pointers
     let end_pos = events_slice.len();

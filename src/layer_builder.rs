@@ -107,20 +107,24 @@ impl<OutMode: OutputMode + 'static> LayerBuilder<OutMode> {
     /// ```
     /// # use tracing_subscriber::prelude::*;
     /// # let reg = tracing_subscriber::registry();
-    /// # let layer = 
+    /// # let layer =
     /// tracing_etw::LayerBuilder::new("SampleProviderName")
-    ///     .with_provider_id(&tracing_etw::native::GuidWrapper::from_name("SampleProviderName"))
-    /// # ;
+    ///     .with_provider_id(0x2bd01356_123d_45bb_b99b_9d7ec39e4954_u128);
+    /// # assert_eq!(layer.get_provider_id().to_u128(), 0x2bd01356_123d_45bb_b99b_9d7ec39e4954_u128);
     /// # let built = layer.build();
     /// # assert!(built.is_ok());
     /// # reg.with(built.unwrap());
     /// ```
     ///
-    pub fn with_provider_id<G>(mut self, guid: &G) -> Self
-    where
-        for<'a> &'a G: Into<GuidWrapper>,
+    /// ID can be of any type that converts to [`GuidWrapper`] such as:
+    /// * `u128`
+    /// * References to platform specific Guid types like `&tracelogging::Guid` (on Windows)
+    ///   and `&eventheader::Guid` (on Linux)
+    ///
+    /// See the `From` trait implementations of [`GuidWrapper`] for available options.
+    pub fn with_provider_id(mut self, id: impl Into<GuidWrapper>) -> Self
     {
-        self.provider_id = guid.into();
+        self.provider_id = id.into();
         self
     }
 
@@ -131,12 +135,9 @@ impl<OutMode: OutputMode + 'static> LayerBuilder<OutMode> {
     /// ```
     /// # use tracing_subscriber::prelude::*;
     /// # let reg = tracing_subscriber::registry();
-    /// # let layer =
-    /// tracing_etw::LayerBuilder::new("SampleProviderName")
-    /// # ;
-    /// assert!(
-    ///     layer.get_provider_id() == tracing_etw::native::GuidWrapper::from_name("SampleProviderName"),
-    ///     "default provider GUID is hashed from the provider name");
+    /// # let layer = tracing_etw::LayerBuilder::new("SampleProviderName");
+    /// let provider_id = layer.get_provider_id();
+    /// # println!("Provider GUID: {:032x}", provider_id.to_u128());
     /// # let built = layer.build();
     /// # assert!(built.is_ok());
     /// # reg.with(built.unwrap());

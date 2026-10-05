@@ -93,6 +93,10 @@ name = "core_spans"
 name = "registry_spans"
 required-features = ["std"]
 
+[[test]]
+name = "no_static_metadata"
+required-features = ["std"]
+
 [package.metadata.docs.rs]
 all-features = true
 rustdoc-args = ["--cfg", "docsrs"]

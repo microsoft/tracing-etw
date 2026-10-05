@@ -41,8 +41,7 @@ fn process_static_metadata() -> Box<[ParsedEventMetadata]> {
     // so we can guarantee we aren't making a reference to null here.
     let events_slice = unsafe { &mut *core::ptr::slice_from_raw_parts_mut(start, stop_offset) };
 
-    if events_slice.is_empty() || // On Windows, an empty binary produces an empty array
-       (events_slice.len() == 1 && events_slice[0].is_null()) { // On Linux, an empty binary produces a single array element of 0x0.
+    if events_slice.is_empty() || events_slice[0].is_null() {
         return Box::new([]);
     }
 

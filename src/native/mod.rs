@@ -40,7 +40,10 @@ pub(crate) use tracelogging_dynamic::Guid as native_guid;
 
 use crate::error::EtwError;
 
-#[doc(hidden)]
+/// A platform-independent GUID type.
+///
+/// Supports conversion from `u128` and platform native GUID types
+/// like `tracelogging::Guid`.
 #[derive(Copy, Clone, PartialEq, Eq)]
 pub struct GuidWrapper(u128);
 
@@ -81,10 +84,11 @@ impl AsRef<u128> for GuidWrapper {
 }
 
 impl GuidWrapper {
-    pub fn from_name(name: &str) -> Self {
+    pub(crate) fn from_name(name: &str) -> Self {
         Self(native_guid::from_name(name).to_u128())
     }
 
+    /// Gets the `u128` representation
     pub fn to_u128(&self) -> u128 {
         self.0
     }

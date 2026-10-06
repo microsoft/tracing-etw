@@ -47,7 +47,10 @@ use core::pin::Pin;
 extern crate alloc;
 use alloc::sync::Arc;
 
-#[doc(hidden)]
+/// A platform-independent GUID type.
+///
+/// Supports conversion from `u128` and platform native GUID types
+/// like `tracelogging::Guid`.
 #[derive(Copy, Clone, PartialEq, Eq)]
 pub struct GuidWrapper(u128);
 
@@ -110,10 +113,11 @@ pub const fn to_hex_utf8_bytes(val: u64) -> [u8; 16] {
 }
 
 impl GuidWrapper {
-    pub fn from_name(name: &str) -> Self {
+    pub(crate) fn from_name(name: &str) -> Self {
         Self(native_guid::from_name(name).to_u128())
     }
 
+    /// Gets the `u128` representation
     pub fn to_u128(&self) -> u128 {
         self.0
     }

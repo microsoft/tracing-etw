@@ -235,9 +235,10 @@ pub mod error;
 #[cfg_attr(docsrs, doc(cfg(feature = "opentelemetry")))]
 pub(crate) mod otel;
 
-pub use layer_builder::LayerBuilder;
-
 mod layer;
+
+pub use layer_builder::LayerBuilder;
+pub use native::GuidWrapper;
 
 #[macro_export]
 macro_rules! etw_event {

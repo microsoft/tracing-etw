@@ -6,7 +6,12 @@ use crate::error::EtwError;
 
 use super::OutputMode;
 
-pub(crate) type ProviderGroupType = PhantomData<char>;
+/// The ID of a provider group, as passed to
+/// [`LayerBuilder::with_provider_group`](crate::LayerBuilder::with_provider_group).
+///
+/// This type is platform-specific: a GUID on Windows, a string on Linux,
+/// and a placeholder on other platforms, which do not support provider groups.
+pub type ProviderGroupId = PhantomData<char>;
 
 #[doc(hidden)]
 pub struct Provider<Mode: OutputMode> {
@@ -23,7 +28,7 @@ impl<Mode: OutputMode> crate::native::ProviderTraits for Provider<Mode> {
         Ok(())
     }
 
-    fn is_valid_group(_provider_name: &str, _value: &ProviderGroupType) -> Result<(), EtwError> {
+    fn is_valid_group(_provider_name: &str, _value: &ProviderGroupId) -> Result<(), EtwError> {
         Ok(())
     }
 
@@ -35,7 +40,7 @@ impl<Mode: OutputMode> crate::native::ProviderTraits for Provider<Mode> {
     fn new<G>(
         _provider_name: &str,
         _provider_id: &G,
-        _provider_group: &Option<ProviderGroupType>,
+        _provider_group: &Option<ProviderGroupId>,
         _default_keyword: u64,
     ) -> Pin<Arc<Self>>
     where

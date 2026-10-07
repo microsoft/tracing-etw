@@ -37,7 +37,7 @@ use crate::native::{
 pub struct LayerBuilder<OutMode: OutputMode> {
     provider_name: Box<str>,
     provider_id: GuidWrapper,
-    provider_group: Option<crate::native::ProviderGroupType>,
+    provider_group: Option<crate::native::ProviderGroupId>,
     default_keyword: u64,
     _o: PhantomData<OutMode>,
 }
@@ -186,10 +186,7 @@ impl<OutMode: OutputMode + 'static> LayerBuilder<OutMode> {
     /// For ETW, the group ID must be a GUID.
     /// 
     /// For user_events, the group ID must be a string.
-    pub fn with_provider_group<G>(mut self, group_id: &G) -> Self
-    where
-        for<'a> &'a G: Into<crate::native::ProviderGroupType>,
-    {
+    pub fn with_provider_group(mut self, group_id: impl Into<crate::ProviderGroupId>) -> Self {
         self.provider_group = Some(group_id.into());
         self
     }

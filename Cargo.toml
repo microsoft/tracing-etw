@@ -30,7 +30,7 @@ hashbrown = "0.15"
 
 # Optional OpenTelemetry dependencies
 tracing-opentelemetry = {version = "0.32", optional = true}
-opentelemetry = {version = "0.31", optional = true, default-features = false, features = ["trace"]}
+opentelemetry = {version = "0.33", optional = true, default-features = false, features = ["trace"]}
 
 [target.'cfg(not(target_os = "linux"))'.dependencies]
 tracelogging = ">= 1.2.0"

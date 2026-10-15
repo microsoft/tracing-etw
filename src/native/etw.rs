@@ -20,7 +20,12 @@ pub(crate) static mut _start__etw_kw: usize = 0;
 #[unsafe(link_section = ".rdata$zRSETW9")]
 pub(crate) static mut _stop__etw_kw: usize = 0;
 
-pub(crate) type ProviderGroupType = crate::native::native_guid;
+/// The ID of a provider group passed to
+/// [`LayerBuilder::with_provider_group`](crate::LayerBuilder::with_provider_group).
+///
+/// This type is platform-specific. It maps to [`tracelogging::Guid`] on Windows
+/// and [`Cow<'static, str>`](std::borrow::Cow) on Linux.
+pub type ProviderGroupId = crate::native::native_guid;
 
 thread_local! {static EBW: std::cell::RefCell<EventBuilder>  = RefCell::new(EventBuilder::new());}
 
@@ -109,7 +114,7 @@ impl<Mode: OutputMode> crate::native::ProviderTraits for Provider<Mode> {
         Ok(())
     }
 
-    fn is_valid_group(_provider_name: &str, value: &ProviderGroupType) -> Result<(), EtwError> {
+    fn is_valid_group(_provider_name: &str, value: &ProviderGroupId) -> Result<(), EtwError> {
         if value == &crate::native::native_guid::zero() {
             Err(EtwError::EmptyProviderGroupGuid)
         } else {
@@ -125,7 +130,7 @@ impl<Mode: OutputMode> crate::native::ProviderTraits for Provider<Mode> {
     fn new<G>(
         provider_name: &str,
         provider_id: &G,
-        provider_group: &Option<ProviderGroupType>,
+        provider_group: &Option<ProviderGroupId>,
         _default_keyword: u64,
     ) -> Pin<Arc<Self>>
     where

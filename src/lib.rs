@@ -202,8 +202,11 @@ pub(crate) mod otel;
 
 mod layer;
 
+pub use layer::EtwLayer;
+#[cfg(any(not(feature = "global_filter"), docsrs))]
+pub use layer::EtwFilter;
 pub use layer_builder::LayerBuilder;
-pub use native::GuidWrapper;
+pub use native::{CommonSchemaOutput, GuidWrapper, NormalOutput, OutputMode, ProviderGroupId};
 
 #[macro_export]
 macro_rules! etw_event {

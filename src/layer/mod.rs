@@ -30,14 +30,19 @@ impl<S, OutMode: OutputMode> Clone for _EtwLayer<S, OutMode> {
     }
 }
 
-// This struct needs to be public as it implements the tracing_subscriber::Layer and tracing_subscriber::Layer::Filter traits.
-#[doc(hidden)]
+/// A [`Layer`](tracing_subscriber::Layer) that writes `tracing` events
+/// and spans as ETW events or user_events.
+///
+/// Use [`LayerBuilder`](crate::LayerBuilder) to construct this type.
 pub struct EtwLayer<S, OutMode: OutputMode> {
     pub(crate) layer: _EtwLayer<S, OutMode>,
 }
 
-// This struct needs to be public as it implements the tracing_subscriber::Layer::Filter trait.
-#[doc(hidden)]
+/// A [`Filter`](tracing_subscriber::layer::Filter) for [`EtwLayer`] that
+/// determines if an event or span is enabled based on whether an ETW or
+/// user_events session is currently collecting events matching its level
+/// and keyword.
+#[cfg_attr(docsrs, doc(cfg(not(feature = "global_filter"))))]
 #[cfg(any(not(feature = "global_filter"), docsrs))]
 pub struct EtwFilter<S, OutMode: OutputMode> {
     pub(crate) layer: _EtwLayer<S, OutMode>,

@@ -237,8 +237,12 @@ pub(crate) mod otel;
 
 mod layer;
 
+pub use layer::EtwLayer;
+#[cfg_attr(docsrs, doc(cfg(feature = "std")))]
+#[cfg(feature = "std")]
+pub use layer::registry_subscriber::EtwFilter;
 pub use layer_builder::LayerBuilder;
-pub use native::GuidWrapper;
+pub use native::{CommonSchemaOutput, GuidWrapper, NormalOutput, OutputMode, ProviderGroupId};
 
 #[macro_export]
 macro_rules! etw_event {

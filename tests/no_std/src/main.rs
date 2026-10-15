@@ -120,10 +120,19 @@ extern "system" fn worker(_: *mut c_void) -> u32 {
 
 #[unsafe(no_mangle)]
 pub extern "C" fn main() -> i32 {
-    trace::subscriber::set_global_default(
-        exporter::LayerBuilder::new("NoStdGlobal").build().unwrap(),
-    )
-    .unwrap();
+    #[cfg(windows)]
+    let group = exporter::ProviderGroupId::from_u128(&0x2bd01356_123d_45bb_b99b_9d7ec39e4954);
+    #[cfg(target_os = "linux")]
+    let group = exporter::ProviderGroupId::Borrowed("NoStdGroup");
+    let subscriber: exporter::EtwLayer<(), exporter::NormalOutput> =
+        exporter::LayerBuilder::new("NoStdGlobal")
+            .with_provider_id(exporter::GuidWrapper::from(
+                0x2bd01356_123d_45bb_b99b_9d7ec39e4954,
+            ))
+            .with_provider_group(group)
+            .build()
+            .unwrap();
+    trace::subscriber::set_global_default(subscriber).unwrap();
     #[cfg(target_os = "linux")]
     {
         let mut thread = core::mem::MaybeUninit::uninit();

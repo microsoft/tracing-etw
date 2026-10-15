@@ -18,6 +18,13 @@ pub struct _EtwTracingSubscriber<OutMode: OutputMode, S = ()> {
     pub(crate) _p: PhantomData<S>,
 }
 
+/// A tracing layer that writes events and spans as ETW events or user_events.
+///
+/// Use [`LayerBuilder`](crate::LayerBuilder) to construct this type.
+/// With `std`, `S` is the registry subscriber used by the layer. The standalone
+/// [`tracing::Subscriber`] implementation uses `S = ()`.
+pub type EtwLayer<S, OutMode> = _EtwTracingSubscriber<OutMode, S>;
+
 impl<OutMode: OutputMode, S> _EtwTracingSubscriber<OutMode, S> {
     pub(crate) fn is_enabled(
         &self,

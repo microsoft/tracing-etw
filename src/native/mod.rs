@@ -9,7 +9,7 @@ pub(crate) use etw::_stop__etw_kw;
 #[doc(hidden)]
 pub use etw::Provider;
 #[cfg(target_os = "windows")]
-pub(crate) use etw::ProviderGroupType;
+pub use etw::ProviderGroupId;
 
 #[cfg(not(any(target_os = "windows", target_os = "linux")))]
 #[doc(hidden)]
@@ -18,7 +18,7 @@ pub mod noop;
 #[doc(hidden)]
 pub use noop::Provider;
 #[cfg(not(any(target_os = "windows", target_os = "linux")))]
-pub(crate) use noop::ProviderGroupType;
+pub use noop::ProviderGroupId;
 
 #[cfg(target_os = "linux")]
 #[doc(hidden)]
@@ -31,7 +31,7 @@ pub(crate) use user_events::_stop__etw_kw;
 #[doc(hidden)]
 pub use user_events::Provider;
 #[cfg(target_os = "linux")]
-pub(crate) use user_events::ProviderGroupType;
+pub use user_events::ProviderGroupId;
 
 #[cfg(target_os = "linux")]
 pub(crate) use eventheader::Guid as native_guid;
@@ -130,15 +130,17 @@ mod private {
     pub struct SealedStruct;
 }
 
-#[doc(hidden)]
+/// The format of events emitted by an [`EtwLayer`](crate::EtwLayer).
+///
+/// This trait is sealed and cannot be implemented outside this crate.
 pub trait OutputMode: private::Sealed {}
 
-#[doc(hidden)]
+/// An [`OutputMode`] representing the standard ETW or user_events format.
 pub struct NormalOutput(private::SealedStruct);
 impl private::Sealed for NormalOutput {}
 impl OutputMode for NormalOutput {}
 
-#[doc(hidden)]
+/// An [`OutputMode`] representing the Common Schema 4.0 format.
 pub struct CommonSchemaOutput(private::SealedStruct);
 impl private::Sealed for CommonSchemaOutput {}
 impl OutputMode for CommonSchemaOutput {}
@@ -148,7 +150,7 @@ pub trait ProviderTraits {
     fn new<G>(
         provider_name: &str,
         provider_id: &G,
-        provider_group: &Option<ProviderGroupType>,
+        provider_group: &Option<ProviderGroupId>,
         _default_keyword: u64,
     ) -> Pin<Arc<Self>>
     where
@@ -158,7 +160,7 @@ pub trait ProviderTraits {
 
     fn is_valid_provider(provider_name: &str) -> Result<(), EtwError>;
 
-    fn is_valid_group(provider_name: &str, value: &ProviderGroupType) -> Result<(), EtwError>;
+    fn is_valid_group(provider_name: &str, value: &ProviderGroupId) -> Result<(), EtwError>;
 
     fn enabled(&self, level: &tracing_core::Level, keyword: u64) -> bool;
 }

@@ -262,6 +262,7 @@ impl<OutMode: OutputMode + 'static> LayerBuilder<OutMode> {
                 self.default_keyword,
             ),
             default_keyword: self.default_keyword,
+            subscriber_id: crate::layer::core_subscriber::next_id(),
             _p: PhantomData,
         };
 
@@ -271,13 +272,13 @@ impl<OutMode: OutputMode + 'static> LayerBuilder<OutMode> {
     }
 
     /// Constructs a [tracing_core::Subscriber] implementation.
-    /// Prefer [self::build_layer] instead; this should only be used in no_std environments
-    /// or when `tracing_subscriber::Registry` cannot be used.
+    /// Prefer [self::build_layer] when `tracing_subscriber::Registry` can be used.
+    /// This subscriber manages its own span IDs, per-thread entered-span context,
+    /// and reference-counted span lifetime, including retaining parents of live children.
     ///
-    /// This subscriber does not implement any callsite enablement filtering, meaning
-    /// events that are not enabled by ETW/user_events are still considered to be enabled
-    /// by `tracing`. For more efficient processing of disabled events, use [self::build_layer]
-    /// to construct a [tracing_subscriber::Layer] that includes per-layer filtering support.
+    /// It checks native provider enablement directly, without per-layer filtering.
+    /// Disabling the crate's `std` feature selects this implementation in `build()`,
+    /// but the native writers still require the platform standard library.
     ///
     /// ```
     /// let built_layer = tracing_etw::LayerBuilder::new("SampleProviderName").build();
@@ -301,6 +302,7 @@ impl<OutMode: OutputMode + 'static> LayerBuilder<OutMode> {
                 self.default_keyword,
             ),
             default_keyword: self.default_keyword,
+            subscriber_id: crate::layer::core_subscriber::next_id(),
             _p: PhantomData,
         })
     }
@@ -373,6 +375,7 @@ impl<OutMode: OutputMode + 'static> LayerBuilder<OutMode> {
                 self.default_keyword,
             ),
             default_keyword: self.default_keyword,
+            subscriber_id: crate::layer::core_subscriber::next_id(),
             _p: PhantomData,
         };
 
@@ -404,6 +407,7 @@ impl<OutMode: OutputMode + 'static> LayerBuilder<OutMode> {
                 self.default_keyword,
             ),
             default_keyword: self.default_keyword,
+            subscriber_id: crate::layer::core_subscriber::next_id(),
             _p: PhantomData,
         };
 

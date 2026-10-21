@@ -178,6 +178,8 @@ pub trait EventWriter<OutMode: OutputMode> {
     fn write_record(
         self: Pin<&Self>,
         timestamp: std::time::SystemTime,
+        current_span: u64,
+        parent_span: u64,
         event_name: &str,
         level: &tracing_core::Level,
         keyword: u64,

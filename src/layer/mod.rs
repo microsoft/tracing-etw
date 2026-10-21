@@ -14,6 +14,7 @@ use crate::{
 pub struct _EtwTracingSubscriber<OutMode: OutputMode, S = ()> {
     pub(crate) provider: Pin<Arc<crate::native::Provider<OutMode>>>,
     pub(crate) default_keyword: u64,
+    pub(crate) subscriber_id: u64,
     pub(crate) _p: PhantomData<S>,
 }
 
@@ -39,6 +40,7 @@ impl<OutMode: OutputMode, S> Clone for _EtwTracingSubscriber<OutMode, S> {
         _EtwTracingSubscriber {
             provider: self.provider.clone(),
             default_keyword: self.default_keyword,
+            subscriber_id: self.subscriber_id,
             _p: PhantomData,
         }
     }

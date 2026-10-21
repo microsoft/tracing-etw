@@ -28,7 +28,7 @@ chrono = {version="0.4", default-features = false, features=["std"]}
 paste = "1"
 thiserror = {version="2", default-features = false}
 ahash = "0.8"
-hashbrown = "0.15"
+hashbrown = "0.17"
 
 # Optional OpenTelemetry dependencies
 tracing-opentelemetry = {version = "0.32", optional = true}

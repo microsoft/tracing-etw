@@ -9,7 +9,9 @@ use crate::{
     statics::*,
 };
 
-fn get_otel_span_strings<S>(span: Option<tracing_subscriber::registry::SpanRef<'_, S>>) -> Option<SpanStrings>
+fn get_otel_span_strings<S>(
+    span: Option<tracing_subscriber::registry::SpanRef<'_, S>>,
+) -> Option<SpanStrings>
 where
     S: Subscriber + for<'a> LookupSpan<'a>,
 {
@@ -40,11 +42,7 @@ where
         // Late init when the layer is added to a subscriber
     }
 
-    fn on_event(
-        &self,
-        event: &tracing::Event<'_>,
-        ctx: tracing_subscriber::layer::Context<'_, S>,
-    ) {
+    fn on_event(&self, event: &tracing::Event<'_>, ctx: tracing_subscriber::layer::Context<'_, S>) {
         let etw_meta = get_event_metadata(&event.metadata().callsite());
         let (name, keyword, tag) = if let Some(meta) = etw_meta {
             (event.metadata().name(), meta.kw, meta.event_tag)
@@ -52,33 +50,63 @@ where
             (event.metadata().name(), self.default_keyword, 0)
         };
 
-        common::write_event(self.provider.as_ref(), event, name, keyword, tag, get_otel_span_strings(ctx.event_span(event)))
+        let span = ctx.event_span(event);
+        let id = span.as_ref().map(|span| span.id());
+        common::write_event(
+            self.subscriber_id,
+            self.provider.as_ref(),
+            event,
+            name,
+            keyword,
+            tag,
+            id.as_ref(),
+            get_otel_span_strings(span),
+        )
     }
 
     fn on_new_span(
         &self,
         attrs: &span::Attributes<'_>,
         id: &span::Id,
-        _ctx: tracing_subscriber::layer::Context<'_, S>,
+        ctx: tracing_subscriber::layer::Context<'_, S>,
     ) {
         // We can't cache the otel spans here because we don't know which layer will see the span first
-        common::create_span_data_for_new_span(attrs, id)
+        let parent = if attrs.is_contextual() {
+            ctx.lookup_current().map(|span| span.id())
+        } else {
+            attrs.parent().cloned()
+        };
+        common::create_span_data_for_new_span(self.subscriber_id, attrs, id, parent.as_ref())
     }
 
     fn on_enter(&self, id: &span::Id, ctx: tracing_subscriber::layer::Context<'_, S>) {
         // Spans don't have callsites to store keyword/tag metadata on,
         // so we must use the defaults.
-        common::enter_span(id, self.provider.as_ref(), self.default_keyword, 0, get_otel_span_strings(ctx.span(id)))
+        common::enter_span(
+            self.subscriber_id,
+            id,
+            self.provider.as_ref(),
+            self.default_keyword,
+            0,
+            get_otel_span_strings(ctx.span(id)),
+        )
     }
 
     fn on_exit(&self, id: &span::Id, ctx: tracing_subscriber::layer::Context<'_, S>) {
         // Spans don't have callsites to store keyword/tag metadata on,
         // so we must use the defaults.
-        common::exit_span(id, self.provider.as_ref(), self.default_keyword, 0, get_otel_span_strings(ctx.span(id)))
+        common::exit_span(
+            self.subscriber_id,
+            id,
+            self.provider.as_ref(),
+            self.default_keyword,
+            0,
+            get_otel_span_strings(ctx.span(id)),
+        )
     }
 
     fn on_close(&self, id: span::Id, _ctx: tracing_subscriber::layer::Context<'_, S>) {
-        let _ = common::release_span(&id);
+        let _ = common::release_span(self.subscriber_id, &id);
     }
 
     fn on_record(
@@ -87,6 +115,6 @@ where
         values: &span::Record<'_>,
         _ctx: tracing_subscriber::layer::Context<'_, S>,
     ) {
-        common::update_span_values(id, values)
+        common::update_span_values(self.subscriber_id, id, values)
     }
 }

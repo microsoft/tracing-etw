@@ -16,6 +16,26 @@ encoding; requires a Linux 6.4+ kernel).
 
 *Note*: Linux kernels without user_events support will not log any events.
 
+## Standalone subscriber
+
+The default `std` feature enables integration with `tracing-subscriber`'s span
+registry. With `default-features = false`, `LayerBuilder::build()` instead
+constructs a standalone `tracing::Subscriber`; `build_subscriber()` explicitly
+selects this implementation with either feature configuration.
+
+The standalone subscriber tracks entered spans per thread and subscriber,
+including nested and repeated entries. Span clones, entered spans, and live
+children retain span data until their references are released. Contextual
+children and events use the currently entered span; explicit parents and
+explicit roots override that context.
+
+Disabling the `std` feature removes the registry integration, not the native
+backends' platform standard-library requirement. Native writers still use
+standard-library synchronization, thread-local storage, and clocks; this is not
+support for a freestanding `no_std` target. The default `opentelemetry` feature
+also enables `std`, so disable default features to select the standalone-only
+configuration.
+
 ## MSV
 
 Minimum supported Rust version is 1.82 (released October 2024).

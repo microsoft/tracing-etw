@@ -41,16 +41,3 @@ where
         None
     }
 }
-
-/// Extract OpenTelemetry context from a parent span's extensions.
-///
-/// Similar to `get_otel_span_data` but takes an optional span reference
-/// and returns None if the span is None or has no OTel context.
-pub(crate) fn extract_parent_otel_context<'a, R>(
-    parent: Option<tracing_subscriber::registry::SpanRef<'a, R>>,
-) -> Option<OtelSpanStrings>
-where
-    R: LookupSpan<'a>,
-{
-    parent.map(|p| get_otel_span_data(&p)).flatten()
-}

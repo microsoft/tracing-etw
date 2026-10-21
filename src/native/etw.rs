@@ -11,7 +11,7 @@ use crate::{
     layer::common::SpanStrings,
     native::{CommonSchemaOutput, NormalOutput, OutputMode},
     statics::GLOBAL_ACTIVITY_SEED,
-    values::{event_values::*, *}
+    values::{event_values::*, *},
 };
 
 // Items within this .rdata section will be sorted alphabetically, thus the start is named with "0", the end "9", and each metadata "5".
@@ -25,7 +25,7 @@ pub(crate) static mut _stop__etw_kw: usize = 0;
 
 pub(crate) type ProviderGroupType = crate::native::native_guid;
 
-thread_local! {static EBW: RefCell<EventBuilder>  = RefCell::new(EventBuilder::new());}
+std::thread_local! {static EBW: RefCell<EventBuilder>  = RefCell::new(EventBuilder::new());}
 
 struct Win32SystemTime {
     st: [u16; 8],
@@ -282,12 +282,14 @@ impl<Mode: OutputMode> super::EventWriter<NormalOutput> for Provider<Mode> {
     fn write_record(
         self: Pin<&Self>,
         timestamp: std::time::SystemTime,
+        current_span: u64,
+        parent_span: u64,
         event_name: &str,
         level: &tracing_core::Level,
         keyword: u64,
         event_tag: u32,
         event: &tracing::Event<'_>,
-        span_strings: Option<SpanStrings>,
+        _span_strings: Option<SpanStrings>,
     ) {
         let mut activity_id: [u8; 16] = *GLOBAL_ACTIVITY_SEED;
         activity_id[0] = if current_span != 0 {
@@ -425,7 +427,11 @@ impl<Mode: OutputMode> super::EventWriter<CommonSchemaOutput> for Provider<Mode>
             //     }
             // }
 
-            let partb_field_count = 3 + if data.span_strings().parent_span_id().is_some() { 1 } else { 0 };
+            let partb_field_count = 3 + if data.span_strings().parent_span_id().is_some() {
+                1
+            } else {
+                0
+            };
 
             eb.add_struct("PartB", partb_field_count, 0);
             {
@@ -471,6 +477,8 @@ impl<Mode: OutputMode> super::EventWriter<CommonSchemaOutput> for Provider<Mode>
     fn write_record(
         self: Pin<&Self>,
         timestamp: std::time::SystemTime,
+        _current_span: u64,
+        _parent_span: u64,
         event_name: &str,
         level: &tracing_core::Level,
         keyword: u64,

@@ -184,6 +184,11 @@
 #![cfg_attr(docsrs, feature(doc_cfg))]
 #![cfg_attr(not(feature = "std"), no_std)]
 
+// Native writers require platform threads, synchronization, and clocks even
+// when the tracing-subscriber registry integration is disabled.
+#[cfg(not(feature = "std"))]
+extern crate std;
+
 mod layer_builder;
 // Module that abstracts the native ETW and Linux user_events APIs, depending on the target platform.
 // Consumers of the crate should not need to use this module directly.

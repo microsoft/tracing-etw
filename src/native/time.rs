@@ -30,7 +30,15 @@ impl CivilTime {
     /// Builds a `CivilTime` from a count of whole seconds since the Unix epoch
     /// (which may be negative) and a positive sub-second nanosecond component in
     /// `[0, 1_000_000_000)`.
+    ///
+    /// The nanosecond precondition is enforced by a `debug_assert!`; callers are
+    /// responsible for normalising any sub-second overflow into `secs` first.
     fn from_unix(secs: i64, nanosecond: u32) -> Self {
+        debug_assert!(
+            nanosecond < 1_000_000_000,
+            "nanosecond component {nanosecond} is out of range [0, 1_000_000_000)"
+        );
+
         let days = secs.div_euclid(86_400);
         let secs_of_day = secs.rem_euclid(86_400);
 

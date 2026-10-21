@@ -31,10 +31,15 @@ explicit roots override that context.
 
 Disabling the `std` feature removes the registry integration, not the native
 backends' platform standard-library requirement. Native writers still use
-standard-library synchronization, thread-local storage, and clocks; this is not
+standard-library synchronization and thread-local storage; this is not
 support for a freestanding `no_std` target. The default `opentelemetry` feature
 also enables `std`, so disable default features to select the standalone-only
 configuration.
+
+Wall-clock timestamps use Windows `GetSystemTimePreciseAsFileTime` (`FILETIME`)
+or Unix `clock_gettime(CLOCK_REALTIME)` (`timespec`), without Rust standard-library
+clock APIs. Calendar conversion and RFC3339 formatting are implemented locally.
+Other targets retain the no-op exporter and do not emit timestamps.
 
 ## MSV
 

@@ -19,10 +19,7 @@ static HASHER: ahash::RandomState = ahash::RandomState::with_seeds(
         228_784_672_216_536_063);
 
 pub(crate) static GLOBAL_ACTIVITY_SEED: LazyLock<[u8; 16]> = LazyLock::new(|| {
-    let now = std::time::SystemTime::now()
-        .duration_since(std::time::SystemTime::UNIX_EPOCH)
-        .unwrap()
-        .as_nanos();
+    let now = crate::native::time::Timestamp::now().unix_nanoseconds() as u128;
     let seed = (now >> 64) as u64 | now as u64;
     let mut data = [0; 16];
     let (seed_half, _) = data.split_at_mut(8);

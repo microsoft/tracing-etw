@@ -184,7 +184,7 @@
 #![cfg_attr(docsrs, feature(doc_cfg))]
 #![cfg_attr(not(feature = "std"), no_std)]
 
-// Native writers require platform threads, synchronization, and clocks even
+// Native writers require standard-library threads and synchronization even
 // when the tracing-subscriber registry integration is disabled.
 #[cfg(not(feature = "std"))]
 extern crate std;

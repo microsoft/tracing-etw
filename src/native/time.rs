@@ -1,12 +1,107 @@
 //! Civil calendar conversion and RFC 3339 formatting, ported from the `chr` branch.
 //!
-//! Calendar arithmetic and formatting use only `core` and `alloc`. Reading the
-//! clock remains the caller's responsibility; `SystemTime` is a conversion input.
+//! Windows timestamps wrap `FILETIME`; Unix timestamps wrap the platform's
+//! `timespec`. Clock reads, calendar arithmetic, and formatting do not use the
+//! Rust standard library.
 
 extern crate alloc;
 use alloc::string::String;
 use core::fmt::Write;
-use std::time::{SystemTime, UNIX_EPOCH};
+#[cfg(any(windows, unix))]
+use core::mem::MaybeUninit;
+
+#[cfg(windows)]
+const FILETIME_UNIX_EPOCH_SECONDS: u64 = 11_644_473_600;
+#[cfg(windows)]
+const FILETIME_UNIX_EPOCH_TICKS: u64 = FILETIME_UNIX_EPOCH_SECONDS * 10_000_000;
+
+/// A native UTC wall-clock timestamp.
+///
+/// Other targets use an epoch placeholder for the no-op exporter, which never
+/// serializes timestamps or reads a clock.
+#[derive(Copy, Clone)]
+pub(crate) struct Timestamp {
+    #[cfg(windows)]
+    value: windows_sys::Win32::Foundation::FILETIME,
+    #[cfg(unix)]
+    value: libc::timespec,
+}
+
+impl Timestamp {
+    pub(crate) const UNIX_EPOCH: Self = Self {
+        #[cfg(windows)]
+        value: windows_sys::Win32::Foundation::FILETIME {
+            dwLowDateTime: FILETIME_UNIX_EPOCH_TICKS as u32,
+            dwHighDateTime: (FILETIME_UNIX_EPOCH_TICKS >> 32) as u32,
+        },
+        #[cfg(unix)]
+        // SAFETY: Zero is valid for the integer fields and any ABI padding.
+        value: unsafe { core::mem::zeroed() },
+    };
+
+    pub(crate) fn now() -> Self {
+        #[cfg(windows)]
+        {
+            let mut value = MaybeUninit::uninit();
+            // SAFETY: The API initializes the FILETIME pointed to by its argument.
+            unsafe {
+                windows_sys::Win32::System::SystemInformation::GetSystemTimePreciseAsFileTime(
+                    value.as_mut_ptr(),
+                );
+                Self {
+                    value: value.assume_init(),
+                }
+            }
+        }
+        #[cfg(unix)]
+        {
+            let mut value = MaybeUninit::uninit();
+            // SAFETY: The pointer is writable and has the platform's timespec layout.
+            let result = unsafe { libc::clock_gettime(libc::CLOCK_REALTIME, value.as_mut_ptr()) };
+            assert_eq!(result, 0, "clock_gettime(CLOCK_REALTIME) failed");
+            Self {
+                // SAFETY: A successful clock_gettime call initialized the timespec.
+                value: unsafe { value.assume_init() },
+            }
+        }
+        #[cfg(not(any(windows, unix)))]
+        {
+            Self::UNIX_EPOCH
+        }
+    }
+
+    fn unix_parts(self) -> (i64, u32) {
+        #[cfg(windows)]
+        {
+            let ticks =
+                (u64::from(self.value.dwHighDateTime) << 32) | u64::from(self.value.dwLowDateTime);
+            let seconds = (ticks / 10_000_000) as i64 - FILETIME_UNIX_EPOCH_SECONDS as i64;
+            let nanoseconds = (ticks % 10_000_000) as u32 * 100;
+            (seconds, nanoseconds)
+        }
+        #[cfg(unix)]
+        {
+            // These casts also support ABIs with 32-bit time_t or c_long.
+            #[allow(clippy::unnecessary_cast)]
+            let seconds = self.value.tv_sec as i64;
+            #[allow(clippy::unnecessary_cast)]
+            let nanoseconds = self.value.tv_nsec as i64;
+            let seconds = seconds
+                .checked_add(nanoseconds.div_euclid(1_000_000_000))
+                .expect("Timestamp exceeds supported Unix seconds");
+            (seconds, nanoseconds.rem_euclid(1_000_000_000) as u32)
+        }
+        #[cfg(not(any(windows, unix)))]
+        {
+            (0, 0)
+        }
+    }
+
+    pub(crate) fn unix_nanoseconds(self) -> i128 {
+        let (seconds, nanoseconds) = self.unix_parts();
+        i128::from(seconds) * 1_000_000_000 + i128::from(nanoseconds)
+    }
+}
 
 /// A timestamp broken down into UTC civil calendar fields.
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
@@ -49,23 +144,9 @@ impl CivilTime {
     }
 }
 
-impl From<SystemTime> for CivilTime {
-    fn from(value: SystemTime) -> Self {
-        let (secs, nanosecond) = match value.duration_since(UNIX_EPOCH) {
-            Ok(dur) => (
-                i64::try_from(dur.as_secs()).expect("Timestamp exceeds supported Unix seconds"),
-                dur.subsec_nanos(),
-            ),
-            Err(e) => {
-                let dur = e.duration();
-                let nanos = dur.subsec_nanos();
-                let secs = -i128::from(dur.as_secs()) - i128::from(nanos != 0);
-                (
-                    i64::try_from(secs).expect("Timestamp precedes supported Unix seconds"),
-                    if nanos == 0 { 0 } else { 1_000_000_000 - nanos },
-                )
-            }
-        };
+impl From<Timestamp> for CivilTime {
+    fn from(value: Timestamp) -> Self {
+        let (secs, nanosecond) = value.unix_parts();
         Self::from_unix(secs, nanosecond)
     }
 }
@@ -129,15 +210,17 @@ pub(crate) fn to_rfc3339(ct: CivilTime) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use core::time::Duration;
 
-    fn at(secs: u64, nanos: u32) -> CivilTime {
-        CivilTime::from(UNIX_EPOCH + Duration::new(secs, nanos))
+    fn at(secs: i64, nanos: u32) -> CivilTime {
+        CivilTime::from_unix(secs, nanos)
     }
 
     #[test]
     fn epoch_and_known_datetime() {
-        assert_eq!(to_rfc3339(UNIX_EPOCH.into()), "1970-01-01T00:00:00+00:00");
+        assert_eq!(
+            to_rfc3339(Timestamp::UNIX_EPOCH.into()),
+            "1970-01-01T00:00:00+00:00"
+        );
         assert_eq!(
             to_rfc3339(at(1_704_164_645, 0)),
             "2024-01-02T03:04:05+00:00"
@@ -168,20 +251,12 @@ mod tests {
 
     #[test]
     fn before_epoch_with_fractional_seconds() {
-        for (duration, expected, seconds) in [
-            (Duration::from_secs(1), "1969-12-31T23:59:59+00:00", -1),
-            (
-                Duration::from_nanos(100),
-                "1969-12-31T23:59:59.999999900+00:00",
-                -1,
-            ),
-            (
-                Duration::new(1, 500_000_000),
-                "1969-12-31T23:59:58.500+00:00",
-                -2,
-            ),
+        for (seconds, nanoseconds, expected) in [
+            (-1, 0, "1969-12-31T23:59:59+00:00"),
+            (-1, 999_999_900, "1969-12-31T23:59:59.999999900+00:00"),
+            (-2, 500_000_000, "1969-12-31T23:59:58.500+00:00"),
         ] {
-            let ct = CivilTime::from(UNIX_EPOCH - duration);
+            let ct = CivilTime::from_unix(seconds, nanoseconds);
             assert_eq!(to_rfc3339(ct), expected);
             assert_eq!(ct.unix_seconds(), seconds);
         }
@@ -213,5 +288,80 @@ mod tests {
             let secs = days_from_civil(year, 1, 1) * 86_400;
             assert_eq!(to_rfc3339(CivilTime::from_unix(secs, 0)), expected);
         }
+    }
+
+    #[cfg(windows)]
+    fn filetime(ticks: u64) -> Timestamp {
+        Timestamp {
+            value: windows_sys::Win32::Foundation::FILETIME {
+                dwLowDateTime: ticks as u32,
+                dwHighDateTime: (ticks >> 32) as u32,
+            },
+        }
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn windows_filetime_epochs_and_subsecond_precision() {
+        for (ticks, expected, nanoseconds) in [
+            (0, "1601-01-01T00:00:00+00:00", -11_644_473_600_000_000_000),
+            (FILETIME_UNIX_EPOCH_TICKS, "1970-01-01T00:00:00+00:00", 0),
+            (
+                FILETIME_UNIX_EPOCH_TICKS - 1,
+                "1969-12-31T23:59:59.999999900+00:00",
+                -100,
+            ),
+            (
+                FILETIME_UNIX_EPOCH_TICKS + 1_704_164_645 * 10_000_000 + 1_234_567,
+                "2024-01-02T03:04:05.123456700+00:00",
+                1_704_164_645_123_456_700,
+            ),
+        ] {
+            let timestamp = filetime(ticks);
+            assert_eq!(to_rfc3339(timestamp.into()), expected);
+            assert_eq!(timestamp.unix_nanoseconds(), nanoseconds);
+        }
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn unix_timespec_normalizes_subseconds() {
+        for (seconds, nanoseconds, expected) in [
+            (
+                1_704_164_645,
+                123_456_789,
+                "2024-01-02T03:04:05.123456789+00:00",
+            ),
+            (
+                1_704_164_644,
+                1_500_000_000,
+                "2024-01-02T03:04:05.500+00:00",
+            ),
+            (0, -1, "1969-12-31T23:59:59.999999999+00:00"),
+        ] {
+            let mut timestamp = Timestamp::UNIX_EPOCH;
+            timestamp.value.tv_sec = seconds;
+            timestamp.value.tv_nsec = nanoseconds;
+            assert_eq!(to_rfc3339(timestamp.into()), expected);
+            assert_eq!(
+                timestamp.unix_nanoseconds(),
+                i128::from(seconds) * 1_000_000_000 + i128::from(nanoseconds),
+            );
+        }
+    }
+
+    #[cfg(any(windows, unix))]
+    #[test]
+    fn native_clock_returns_a_valid_current_timestamp() {
+        let timestamp = Timestamp::now();
+        let (seconds, nanoseconds) = timestamp.unix_parts();
+        assert!(
+            seconds >= 1_704_067_200,
+            "Native clock returned a date before 2024"
+        );
+        assert!(nanoseconds < 1_000_000_000);
+        let civil = CivilTime::from(timestamp);
+        assert_eq!(civil.unix_seconds(), seconds);
+        assert_eq!(civil.nanosecond, nanoseconds);
     }
 }

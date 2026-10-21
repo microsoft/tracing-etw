@@ -41,6 +41,12 @@ tracelogging_dynamic = ">= 1.2.0"
 eventheader = ">= 0.5"
 eventheader_dynamic = ">= 0.5"
 
+[target.'cfg(windows)'.dependencies]
+windows-sys = {version = "0.61", default-features = false, features = ["Win32_Foundation", "Win32_System_SystemInformation"]}
+
+[target.'cfg(unix)'.dependencies]
+libc = {version = "0.2", default-features = false}
+
 [dev-dependencies]
 criterion = {version="0.5", features=["html_reports"]}
 tracing = {version = "0.1", default-features = false, features = ["std", "attributes"]}

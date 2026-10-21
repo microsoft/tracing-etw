@@ -6,7 +6,7 @@ use std::sync::RwLock;
 use hashbrown::HashMap;
 
 use crate::{
-    native::{EventWriter, OutputMode},
+    native::{EventWriter, OutputMode, time::Timestamp},
     statics::GLOBAL_ACTIVITY_SEED,
     values::{
         ValueTypes,
@@ -64,7 +64,7 @@ struct SpanData {
     ids: SpanIds,
     activity_id: [u8; 16], // if set, byte 0 is 1 and 64-bit span ID in the lower 8 bytes
     related_activity_id: [u8; 16], // if set, byte 0 is 1 and 64-bit parent span ID in the lower 8 bytes
-    start_time: std::time::SystemTime,
+    start_time: Timestamp,
     metadata: &'static tracing_core::Metadata<'static>,
     ref_count: usize,
     retained_parent: Option<tracing::span::Id>,
@@ -157,7 +157,7 @@ pub(crate) fn create_span_data_for_new_span(
             fields: v.into_boxed_slice(),
             activity_id: *GLOBAL_ACTIVITY_SEED,
             related_activity_id: *GLOBAL_ACTIVITY_SEED,
-            start_time: std::time::SystemTime::UNIX_EPOCH,
+            start_time: Timestamp::UNIX_EPOCH,
             metadata,
             ids: SpanIds {
                 span_id: id.into_non_zero_u64(),
@@ -258,7 +258,7 @@ pub(crate) fn enter_span<OutMode: OutputMode>(
     tag: u32,
     otel_span_strings: Option<OtelSpanStrings>,
 ) {
-    let timestamp = std::time::SystemTime::now();
+    let timestamp = Timestamp::now();
 
     let mut span_data_guard = SPAN_DATA.write().unwrap();
     let data = if let Some(data) = span_data_guard.get_mut(&(subscriber_id, id.clone())) {
@@ -293,7 +293,7 @@ pub(crate) fn exit_span<OutMode: OutputMode>(
     tag: u32,
     otel_span_strings: Option<OtelSpanStrings>,
 ) {
-    let stop_timestamp = std::time::SystemTime::now();
+    let stop_timestamp = Timestamp::now();
 
     let span_data_guard = SPAN_DATA.read().unwrap();
     let data = if let Some(data) = span_data_guard.get(&(subscriber_id, id.clone())) {
@@ -343,7 +343,7 @@ pub(crate) fn write_event<OutMode: OutputMode>(
     span: Option<&tracing::span::Id>,
     otel_span_strings: Option<OtelSpanStrings>,
 ) {
-    let timestamp = std::time::SystemTime::now();
+    let timestamp = Timestamp::now();
 
     let spans = SPAN_DATA.read().unwrap();
     let data = span.and_then(|id| spans.get(&(subscriber_id, id.clone())));

@@ -38,6 +38,8 @@ pub(crate) use eventheader::Guid as native_guid;
 #[cfg(not(target_os = "linux"))]
 pub(crate) use tracelogging_dynamic::Guid as native_guid;
 
+pub(crate) mod time;
+
 use crate::error::EtwError;
 use crate::layer::common::SpanStrings;
 use core::pin::Pin;
@@ -168,7 +170,7 @@ pub trait EventWriter<OutMode: OutputMode> {
 
     fn span_stop(
         self: Pin<&Self>,
-        start_stop_times: (std::time::SystemTime, std::time::SystemTime),
+        start_stop_times: (time::CivilTime, time::CivilTime),
         data: crate::layer::common::SpanRef,
         keyword: u64,
         event_tag: u32,
@@ -177,7 +179,7 @@ pub trait EventWriter<OutMode: OutputMode> {
     #[allow(clippy::too_many_arguments)]
     fn write_record(
         self: Pin<&Self>,
-        timestamp: std::time::SystemTime,
+        timestamp: time::CivilTime,
         current_span: u64,
         parent_span: u64,
         event_name: &str,

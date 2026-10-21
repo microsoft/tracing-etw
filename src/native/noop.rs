@@ -1,8 +1,8 @@
-use std::{marker::PhantomData, pin::Pin, sync::Arc, time::SystemTime};
+use std::{marker::PhantomData, pin::Pin, sync::Arc};
 
 use crate::error::EtwError;
 
-use super::OutputMode;
+use super::{OutputMode, time};
 
 pub(crate) type ProviderGroupType = PhantomData<char>;
 
@@ -54,7 +54,7 @@ impl<OutMode: OutputMode> crate::native::EventWriter<OutMode> for Provider<OutMo
 
     fn span_stop(
         self: Pin<&Self>,
-        _start_stop_times: (std::time::SystemTime, std::time::SystemTime),
+        _start_stop_times: (time::CivilTime, time::CivilTime),
         _data: crate::layer::common::SpanRef,
         _keyword: u64,
         _event_tag: u32,
@@ -63,7 +63,7 @@ impl<OutMode: OutputMode> crate::native::EventWriter<OutMode> for Provider<OutMo
 
     fn write_record(
         self: Pin<&Self>,
-        _timestamp: SystemTime,
+        _timestamp: time::CivilTime,
         _current_span: u64,
         _parent_span: u64,
         _event_name: &str,

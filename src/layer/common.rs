@@ -87,8 +87,8 @@ impl SpanRef<'_> {
         *self.data.metadata.level()
     }
 
-    pub(crate) fn timestamp(&self) -> std::time::SystemTime {
-        self.data.start_time
+    pub(crate) fn timestamp(&self) -> crate::native::time::CivilTime {
+        self.data.start_time.into()
     }
 
     // LE bytes rather than a GUID so we don't need a dependency on a GUID type
@@ -304,7 +304,7 @@ pub(crate) fn exit_span<OutMode: OutputMode>(
     };
 
     writer.span_stop(
-        (data.start_time, stop_timestamp),
+        (data.start_time.into(), stop_timestamp.into()),
         SpanRef {
             data,
             span_strings: SpanStrings::build(data, otel_span_strings),
@@ -358,7 +358,7 @@ pub(crate) fn write_event<OutMode: OutputMode>(
     drop(spans);
 
     writer.write_record(
-        timestamp,
+        timestamp.into(),
         current_span,
         parent_span,
         name,
@@ -623,7 +623,10 @@ mod tests {
 
         fn span_stop(
             self: Pin<&Self>,
-            _: (std::time::SystemTime, std::time::SystemTime),
+            _: (
+                crate::native::time::CivilTime,
+                crate::native::time::CivilTime,
+            ),
             _: SpanRef<'_>,
             _: u64,
             _: u32,
@@ -632,7 +635,7 @@ mod tests {
 
         fn write_record(
             self: Pin<&Self>,
-            _: std::time::SystemTime,
+            _: crate::native::time::CivilTime,
             current_span: u64,
             parent_span: u64,
             _: &str,

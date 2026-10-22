@@ -123,7 +123,7 @@ pub extern "C" fn main() -> i32 {
     #[cfg(windows)]
     let group = exporter::ProviderGroupId::from_u128(&0x2bd01356_123d_45bb_b99b_9d7ec39e4954);
     #[cfg(target_os = "linux")]
-    let group = exporter::ProviderGroupId::Borrowed("NoStdGroup");
+    let group = exporter::ProviderGroupId::Borrowed("nostdgroup");
     let subscriber: exporter::EtwLayer<(), exporter::NormalOutput> =
         exporter::LayerBuilder::new("NoStdGlobal")
             .with_provider_id(exporter::GuidWrapper::from(

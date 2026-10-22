@@ -1,13 +1,13 @@
 use core::{num::NonZeroU64, pin::Pin};
 extern crate alloc;
 use alloc::{boxed::Box, vec::Vec};
-use std::sync::RwLock;
 
 use hashbrown::HashMap;
 
 use crate::{
     native::{EventWriter, OutputMode, time::Timestamp},
     statics::GLOBAL_ACTIVITY_SEED,
+    sync::RwLock,
     values::{
         ValueTypes,
         span_values::{FieldValueIndex, SpanValueVisitor},
@@ -184,7 +184,7 @@ pub(crate) fn create_span_data_for_new_span(
         fields: &mut data.fields,
     });
 
-    let mut spans = SPAN_DATA.write().unwrap();
+    let mut spans = SPAN_DATA.write();
     if let Some(existing) = spans.get_mut(&(subscriber_id, id.clone())) {
         // Multiple exporter layers can observe the same registry span.
         existing.ref_count = existing
@@ -206,7 +206,7 @@ pub(crate) fn create_span_data_for_new_span(
 }
 
 pub(crate) fn addref_span(subscriber_id: u64, id: &tracing::span::Id) {
-    let mut spans = SPAN_DATA.write().unwrap();
+    let mut spans = SPAN_DATA.write();
     let span = spans
         .get_mut(&(subscriber_id, id.clone()))
         .expect("Clone or enter of an unrecognized span");
@@ -222,14 +222,13 @@ pub(crate) fn span_metadata(
 ) -> &'static tracing_core::Metadata<'static> {
     SPAN_DATA
         .read()
-        .unwrap()
         .get(&(subscriber_id, id.clone()))
         .expect("Current span is unrecognized")
         .metadata
 }
 
 pub(crate) fn release_span(subscriber_id: u64, id: &tracing::span::Id) -> bool {
-    let mut spans = SPAN_DATA.write().unwrap();
+    let mut spans = SPAN_DATA.write();
     let mut current = (subscriber_id, id.clone());
     loop {
         let span = spans
@@ -260,7 +259,7 @@ pub(crate) fn enter_span<OutMode: OutputMode>(
 ) {
     let timestamp = Timestamp::now();
 
-    let mut span_data_guard = SPAN_DATA.write().unwrap();
+    let mut span_data_guard = SPAN_DATA.write();
     let data = if let Some(data) = span_data_guard.get_mut(&(subscriber_id, id.clone())) {
         data
     } else {
@@ -295,7 +294,7 @@ pub(crate) fn exit_span<OutMode: OutputMode>(
 ) {
     let stop_timestamp = Timestamp::now();
 
-    let span_data_guard = SPAN_DATA.read().unwrap();
+    let span_data_guard = SPAN_DATA.read();
     let data = if let Some(data) = span_data_guard.get(&(subscriber_id, id.clone())) {
         data
     } else {
@@ -319,7 +318,7 @@ pub(crate) fn update_span_values(
     id: &tracing::span::Id,
     values: &tracing::span::Record<'_>,
 ) {
-    let mut span_data_guard = SPAN_DATA.write().unwrap();
+    let mut span_data_guard = SPAN_DATA.write();
     let data = if let Some(data) = span_data_guard.get_mut(&(subscriber_id, id.clone())) {
         data
     } else {
@@ -345,7 +344,7 @@ pub(crate) fn write_event<OutMode: OutputMode>(
 ) {
     let timestamp = Timestamp::now();
 
-    let spans = SPAN_DATA.read().unwrap();
+    let spans = SPAN_DATA.read();
     let data = span.and_then(|id| spans.get(&(subscriber_id, id.clone())));
     let current_span = span.map_or(0, |id| id.into_u64());
     let parent_span = data
@@ -420,10 +419,7 @@ mod tests {
     }
 
     fn contains(subscriber_id: u64, id: &Id) -> bool {
-        SPAN_DATA
-            .read()
-            .unwrap()
-            .contains_key(&(subscriber_id, id.clone()))
+        SPAN_DATA.read().contains_key(&(subscriber_id, id.clone()))
     }
 
     #[test]
@@ -524,7 +520,7 @@ mod tests {
         let explicit = new_span(&subscriber, Parent::Explicit(&parent));
         let root = new_span(&subscriber, Parent::Root);
         {
-            let spans = SPAN_DATA.read().unwrap();
+            let spans = SPAN_DATA.read();
             for id in [&contextual, &explicit] {
                 assert_eq!(
                     spans[&(subscriber.subscriber_id, id.clone())]
@@ -569,12 +565,17 @@ mod tests {
     fn closes_only_after_all_concurrent_references_are_released() {
         let subscriber = new_subscriber();
         let id = new_span(&subscriber, Parent::Root);
+        let barrier = std::sync::Barrier::new(8);
         std::thread::scope(|scope| {
             let mut handles = Vec::new();
             for _ in 0..8 {
                 let cloned = subscriber.clone_span(&id);
                 let subscriber = &subscriber;
-                handles.push(scope.spawn(move || subscriber.try_close(cloned)));
+                let barrier = &barrier;
+                handles.push(scope.spawn(move || {
+                    barrier.wait();
+                    subscriber.try_close(cloned)
+                }));
             }
             for handle in handles {
                 assert!(!handle.join().unwrap());
@@ -601,7 +602,7 @@ mod tests {
             let child = tracing::info_span!("registry child");
             let child_id = child.id().unwrap();
             assert_eq!(
-                SPAN_DATA.read().unwrap()[&(subscriber_id, child_id.clone())]
+                SPAN_DATA.read()[&(subscriber_id, child_id.clone())]
                     .ids
                     .parent_span_id,
                 Some(parent_id.into_non_zero_u64()),

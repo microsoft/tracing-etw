@@ -10,6 +10,7 @@ use crate::{
     layer::common::SpanStrings,
     native::{CommonSchemaOutput, NormalOutput, OutputMode, time},
     statics::GLOBAL_ACTIVITY_SEED,
+    sync::RwLock,
     values::{event_values::*, *},
 };
 use eventheader::*;
@@ -65,7 +66,7 @@ impl AddFieldAndValue for &'_ mut eventheader_dynamic::EventBuilder {
 
 #[doc(hidden)]
 pub struct Provider<OutMode: OutputMode> {
-    provider: std::sync::RwLock<eventheader_dynamic::Provider>,
+    provider: RwLock<eventheader_dynamic::Provider>,
     _m: PhantomData<OutMode>,
 }
 
@@ -106,7 +107,6 @@ impl<OutMode: OutputMode> crate::native::ProviderTraits for Provider<OutMode> {
         let es = self
             .provider
             .read()
-            .unwrap()
             .find_set(Self::map_level(level), keyword);
         if let Some(s) = es { s.enabled() } else { false }
     }
@@ -142,7 +142,7 @@ impl<OutMode: OutputMode> crate::native::ProviderTraits for Provider<OutMode> {
         provider.register_set(Self::map_level(&tracing::Level::TRACE), default_keyword);
 
         Arc::pin(Self {
-            provider: std::sync::RwLock::new(provider),
+            provider: RwLock::new(provider),
             _m: PhantomData,
         })
     }
@@ -154,7 +154,7 @@ impl<OutMode: OutputMode> Provider<OutMode> {
         level: eventheader_dynamic::Level,
         keyword: u64,
     ) -> Option<Arc<eventheader_dynamic::EventSet>> {
-        self.get_provider().read().unwrap().find_set(level, keyword)
+        self.get_provider().read().find_set(level, keyword)
     }
 
     fn register_set(
@@ -162,13 +162,10 @@ impl<OutMode: OutputMode> Provider<OutMode> {
         level: eventheader_dynamic::Level,
         keyword: u64,
     ) -> Arc<eventheader_dynamic::EventSet> {
-        self.get_provider()
-            .write()
-            .unwrap()
-            .register_set(level, keyword)
+        self.get_provider().write().register_set(level, keyword)
     }
 
-    fn get_provider(self: Pin<&Self>) -> Pin<&std::sync::RwLock<eventheader_dynamic::Provider>> {
+    fn get_provider(self: Pin<&Self>) -> Pin<&RwLock<eventheader_dynamic::Provider>> {
         unsafe { self.map_unchecked(|s| &s.provider) }
     }
 

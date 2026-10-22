@@ -31,10 +31,21 @@ explicit roots override that context.
 
 Disabling the `std` feature removes the registry integration, not the native
 backends' platform standard-library requirement. Native writers still use
-standard-library synchronization and thread-local storage; this is not
+standard-library thread-local storage; this is not
 support for a freestanding `no_std` target. The default `opentelemetry` feature
 also enables `std`, so disable default features to select the standalone-only
 configuration.
+
+Shared span storage and the Linux provider use blocking read/write locks with
+poisoning when `std` is enabled. Without `std`, Windows uses native `SRWLOCK`
+locks and Linux uses `libc::pthread_rwlock_t`; neither provides lock poisoning.
+Linux locks are initialized on first use in stable heap allocations, allowing
+their Rust owners to move without relocating initialized pthread objects.
+Activity-seed and event-metadata initialization use the same native blocking
+locks on Windows and Linux, with no spin-lock dependency. Other targets retain
+standard-library synchronization for the no-op exporter. These paths are not
+interrupt-safe or reentrant. Lazy initialization remains poisoned if its
+initializer panics.
 
 Wall-clock timestamps use Windows `GetSystemTimePreciseAsFileTime` (`FILETIME`)
 or Unix `clock_gettime(CLOCK_REALTIME)` (`timespec`), without Rust standard-library

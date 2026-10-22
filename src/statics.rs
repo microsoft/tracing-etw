@@ -1,11 +1,13 @@
 // Module for static variables that are used by the crate.
 
 use core::{cmp, iter::FusedIterator};
-use std::sync::LazyLock;
 extern crate alloc;
 use alloc::{boxed::Box, vec::Vec};
 
-use crate::_details::{EventMetadata, ParsedEventMetadata};
+use crate::{
+    _details::{EventMetadata, ParsedEventMetadata},
+    sync::LazyLock,
+};
 
 // DOS resistance is not needed here.
 // Since we are computing hashes once to generate the static lookup array,
@@ -229,16 +231,27 @@ mod test {
         etw_event!(name: "TestEventWithKeyword9", Level::WARN, 9, "An event with a name and keyword!");
         etw_event!(name: "TestEventWithKeyword10", Level::ERROR, 10, "An event with a name and keyword!");
 
-        let mut sum = 0;
-        for event in event_metadata() {
-            sum += event.kw;
-        }
-
         #[cfg(any(target_os = "windows", target_os = "linux"))]
         let expected = 55;
         #[cfg(not(any(target_os = "windows", target_os = "linux")))]
         let expected = 0;
 
-        assert_eq!(sum, expected);
+        let barrier = std::sync::Barrier::new(8);
+        std::thread::scope(|scope| {
+            for _ in 0..8 {
+                scope.spawn(|| {
+                    barrier.wait();
+                    let mut sum = 0;
+                    for event in event_metadata() {
+                        sum += event.kw;
+                        assert!(core::ptr::eq(
+                            super::get_event_metadata(&event.identity).unwrap(),
+                            event,
+                        ));
+                    }
+                    assert_eq!(sum, expected);
+                });
+            }
+        });
     }
 }

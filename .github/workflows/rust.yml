@@ -34,6 +34,8 @@ jobs:
       run: cargo build --verbose
     - name: Run tests
       run: cargo test --verbose
+    - name: Run standalone subscriber tests
+      run: cargo test --no-default-features
 
   linux-build:
     runs-on: ubuntu-latest
@@ -45,3 +47,5 @@ jobs:
         run: cargo build --verbose
       - name: Run tests
         run: cargo test --verbose
+      - name: Run standalone subscriber tests
+        run: cargo test --no-default-features

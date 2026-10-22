@@ -184,7 +184,7 @@
 #![cfg_attr(docsrs, feature(doc_cfg))]
 #![cfg_attr(not(feature = "std"), no_std)]
 
-// Native writers require standard-library threads and synchronization even
+// Native writers require standard-library thread-local storage even
 // when the tracing-subscriber registry integration is disabled.
 #[cfg(not(feature = "std"))]
 extern crate std;
@@ -195,6 +195,7 @@ mod layer_builder;
 #[doc(hidden)]
 pub mod native;
 mod statics;
+mod sync;
 mod values;
 // Module holding internal details that need to be public but should not be directly used by consumers of the crate.
 #[doc(hidden)]

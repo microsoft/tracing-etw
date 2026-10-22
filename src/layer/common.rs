@@ -10,7 +10,7 @@ use crate::{
     sync::RwLock,
     values::{
         ValueTypes,
-        span_values::{FieldValueIndex, SpanValueVisitor},
+        span_values::{FieldValueIndex, SpanValueVisitor, update_span_value},
     },
 };
 
@@ -23,9 +23,27 @@ static SPAN_DATA: RwLock<HashMap<(u64, tracing::span::Id), SpanData, ahash::Rand
         228_784_672_216_536_063,
     )));
 
+#[derive(Clone, Copy)]
 pub(crate) struct SpanIds {
     pub(crate) span_id: NonZeroU64,
     pub(crate) parent_span_id: Option<NonZeroU64>, // sizeof(Option<NonZeroU64>) == sizeof(u64) is guaranteed by the standard
+}
+
+#[derive(Clone, Copy)]
+pub(crate) struct SpanContext {
+    pub(crate) ids: SpanIds,
+    pub(crate) metadata: &'static tracing_core::Metadata<'static>,
+}
+
+impl SpanContext {
+    pub(crate) fn id(self) -> tracing::span::Id {
+        tracing::span::Id::from_u64(self.ids.span_id.get())
+    }
+}
+
+pub(crate) enum EventSpan<'a> {
+    Id(&'a tracing::span::Id),
+    Cached(SpanIds),
 }
 
 #[doc(hidden)]
@@ -36,12 +54,11 @@ pub struct SpanStrings {
 }
 
 impl SpanStrings {
-    fn build(span_data: &SpanData, otel_span_strings: Option<OtelSpanStrings>) -> SpanStrings {
-        otel_span_strings.unwrap_or(SpanStrings {
+    fn build(ids: SpanIds, otel_span_strings: Option<OtelSpanStrings>) -> SpanStrings {
+        otel_span_strings.unwrap_or_else(|| SpanStrings {
             trace_id: [0; 32],
-            span_id: crate::native::to_hex_utf8_bytes(span_data.ids.span_id.into()),
-            parent_span_id: span_data
-                .ids
+            span_id: crate::native::to_hex_utf8_bytes(ids.span_id.into()),
+            parent_span_id: ids
                 .parent_span_id
                 .map(|pid| crate::native::to_hex_utf8_bytes(pid.into())),
         })
@@ -182,7 +199,7 @@ pub(crate) fn create_span_data_for_new_span(
     };
 
     attrs.values().record(&mut SpanValueVisitor {
-        fields: &mut data.fields,
+        record: |name, mut value| update_span_value(&mut data.fields, name, &mut value),
     });
 
     let mut spans = SPAN_DATA.write();
@@ -206,7 +223,7 @@ pub(crate) fn create_span_data_for_new_span(
     spans.insert((subscriber_id, id.clone()), data);
 }
 
-pub(crate) fn addref_span(subscriber_id: u64, id: &tracing::span::Id) {
+pub(crate) fn addref_span(subscriber_id: u64, id: &tracing::span::Id) -> SpanContext {
     let mut spans = SPAN_DATA.write();
     let span = spans
         .get_mut(&(subscriber_id, id.clone()))
@@ -215,35 +232,33 @@ pub(crate) fn addref_span(subscriber_id: u64, id: &tracing::span::Id) {
         .ref_count
         .checked_add(1)
         .expect("Span reference count overflow");
-}
-
-pub(crate) fn span_metadata(
-    subscriber_id: u64,
-    id: &tracing::span::Id,
-) -> &'static tracing_core::Metadata<'static> {
-    SPAN_DATA
-        .read()
-        .get(&(subscriber_id, id.clone()))
-        .expect("Current span is unrecognized")
-        .metadata
+    SpanContext {
+        ids: span.ids,
+        metadata: span.metadata,
+    }
 }
 
 pub(crate) fn release_span(subscriber_id: u64, id: &tracing::span::Id) -> bool {
-    let mut spans = SPAN_DATA.write();
     let mut current = (subscriber_id, id.clone());
     loop {
-        let span = spans
-            .get_mut(&current)
-            .expect("Close of an unrecognized span");
-        span.ref_count = span
-            .ref_count
-            .checked_sub(1)
-            .expect("Span reference count underflow");
-        if span.ref_count != 0 {
-            return current.1 != *id;
-        }
-        let span = spans.remove(&current).expect("Closed span is unrecognized");
-        match span.retained_parent {
+        let mut removed = {
+            let mut spans = SPAN_DATA.write();
+            let span = spans
+                .get_mut(&current)
+                .expect("Close of an unrecognized span");
+            span.ref_count = span
+                .ref_count
+                .checked_sub(1)
+                .expect("Span reference count underflow");
+            if span.ref_count != 0 {
+                return current.1 != *id;
+            }
+            spans.remove(&current).expect("Closed span is unrecognized")
+        };
+        let parent = removed.retained_parent.take();
+        drop(removed);
+        // The child's retained reference keeps its parent alive between locks.
+        match parent {
             Some(parent) => current.1 = parent,
             None => return true,
         }
@@ -278,7 +293,7 @@ pub(crate) fn enter_span<OutMode: OutputMode>(
     writer.span_start(
         SpanRef {
             data,
-            span_strings: SpanStrings::build(data, otel_span_strings),
+            span_strings: SpanStrings::build(data.ids, otel_span_strings),
         },
         keyword,
         tag,
@@ -307,7 +322,7 @@ pub(crate) fn exit_span<OutMode: OutputMode>(
         (data.start_time.into(), stop_timestamp.into()),
         SpanRef {
             data,
-            span_strings: SpanStrings::build(data, otel_span_strings),
+            span_strings: SpanStrings::build(data.ids, otel_span_strings),
         },
         keyword,
         tag,
@@ -319,17 +334,31 @@ pub(crate) fn update_span_values(
     id: &tracing::span::Id,
     values: &tracing::span::Record<'_>,
 ) {
-    let mut span_data_guard = SPAN_DATA.write();
-    let data = if let Some(data) = span_data_guard.get_mut(&(subscriber_id, id.clone())) {
-        data
-    } else {
-        debug_assert!(false, "Event on unrecognized span");
-        return;
-    };
-
+    // Most records update one field; keep that update inline without allocating.
+    let mut first = None;
+    let mut remaining = Vec::new();
     values.record(&mut SpanValueVisitor {
-        fields: &mut data.fields,
+        record: |name, value| {
+            if first.is_none() {
+                first = Some((name, value));
+            } else {
+                remaining.push((name, value));
+            }
+        },
     });
+    {
+        let mut span_data_guard = SPAN_DATA.write();
+        let data = if let Some(data) = span_data_guard.get_mut(&(subscriber_id, id.clone())) {
+            data
+        } else {
+            debug_assert!(false, "Event on unrecognized span");
+            return;
+        };
+        for (name, value) in first.iter_mut().chain(remaining.iter_mut()) {
+            update_span_value(&mut data.fields, name, value);
+        }
+    }
+    // Updates now own the displaced values, which are dropped without the lock.
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -340,22 +369,29 @@ pub(crate) fn write_event<OutMode: OutputMode>(
     name: &str,
     keyword: u64,
     tag: u32,
-    span: Option<&tracing::span::Id>,
+    span: Option<EventSpan<'_>>,
     otel_span_strings: Option<OtelSpanStrings>,
 ) {
     let timestamp = Timestamp::now();
 
-    let spans = SPAN_DATA.read();
-    let data = span.and_then(|id| spans.get(&(subscriber_id, id.clone())));
-    let current_span = span.map_or(0, |id| id.into_u64());
-    let parent_span = data
-        .and_then(|data| data.ids.parent_span_id)
+    let (current_span, ids) = match span {
+        None => (0, None),
+        Some(EventSpan::Cached(ids)) => (ids.span_id.get(), Some(ids)),
+        Some(EventSpan::Id(id)) => {
+            let ids = SPAN_DATA
+                .read()
+                .get(&(subscriber_id, id.clone()))
+                .map(|data| data.ids);
+            (id.into_u64(), ids)
+        }
+    };
+    let parent_span = ids
+        .and_then(|ids| ids.parent_span_id)
         .map_or(0, |id| id.get());
-    let span_strings = match data {
-        Some(data) => Some(SpanStrings::build(data, otel_span_strings)),
+    let span_strings = match ids {
+        Some(ids) => Some(SpanStrings::build(ids, otel_span_strings)),
         None => otel_span_strings,
     };
-    drop(spans);
 
     writer.write_record(
         timestamp.into(),
@@ -374,9 +410,10 @@ pub(crate) fn write_event<OutMode: OutputMode>(
 mod tests {
     use super::*;
     use crate::{LayerBuilder, layer::_EtwTracingSubscriber, native::NormalOutput};
+    use std::{sync::mpsc, time::Duration};
     use tracing::{
         Metadata, Subscriber,
-        callsite::DefaultCallsite,
+        callsite::{Callsite, DefaultCallsite},
         field::FieldSet,
         metadata::Kind,
         span::{Attributes, Id},
@@ -421,6 +458,147 @@ mod tests {
 
     fn contains(subscriber_id: u64, id: &Id) -> bool {
         SPAN_DATA.read().contains_key(&(subscriber_id, id.clone()))
+    }
+
+    #[test]
+    fn cached_current_context_and_events_bypass_the_map() {
+        let subscriber = new_subscriber();
+        let parent = new_span(&subscriber, Parent::Root);
+        let child_metadata = tracing::callsite! {
+            name: "cached child",
+            kind: Kind::SPAN,
+            target: module_path!(),
+            level: tracing::Level::DEBUG,
+            fields:
+        }
+        .metadata();
+        let child = subscriber.new_span(&Attributes::child_of(
+            parent.clone(),
+            child_metadata,
+            &child_metadata.fields().value_set(&[]),
+        ));
+        assert!(!subscriber.try_close(parent.clone()));
+        std::thread::scope(|scope| {
+            let (ready_sender, ready) = mpsc::channel();
+            let (start, start_receiver) = mpsc::channel();
+            let (finished, result) = mpsc::channel();
+            let subscriber = &subscriber;
+            let child = &child;
+            let reader = scope.spawn(move || {
+                subscriber.enter(child);
+                ready_sender.send(()).unwrap();
+                start_receiver.recv_timeout(Duration::from_secs(5)).unwrap();
+                let current = subscriber.current_span();
+                let correct = current.id() == Some(child)
+                    && core::ptr::eq(current.metadata().unwrap(), child_metadata);
+                let values = META.fields().value_set(&[]);
+                subscriber.event(&tracing::Event::new(&META, &values));
+                finished.send(correct).unwrap();
+                subscriber.exit(child);
+            });
+            ready.recv_timeout(Duration::from_secs(5)).unwrap();
+            assert!(!subscriber.try_close(child.clone()));
+            let guard = SPAN_DATA.write();
+            start.send(()).unwrap();
+            let completed = result.recv_timeout(Duration::from_secs(5));
+            drop(guard);
+            reader.join().unwrap();
+            assert!(completed.unwrap());
+        });
+        assert!(!contains(subscriber.subscriber_id, &child));
+        assert!(!contains(subscriber.subscriber_id, &parent));
+    }
+
+    #[test]
+    fn formats_recorded_values_outside_the_map_lock() {
+        struct FormattingProbe<'a> {
+            start: mpsc::Sender<()>,
+            completed: mpsc::Receiver<()>,
+            unlocked: core::cell::Cell<bool>,
+            subscriber: &'a _EtwTracingSubscriber<NormalOutput>,
+            id: &'a Id,
+        }
+        impl core::fmt::Debug for FormattingProbe<'_> {
+            fn fmt(&self, formatter: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+                self.start.send(()).unwrap();
+                self.unlocked
+                    .set(self.completed.recv_timeout(Duration::from_secs(5)).is_ok());
+                if self.unlocked.get() {
+                    let values = META.fields().value_set(&[]);
+                    self.subscriber.event(&tracing::Event::new_child_of(
+                        Some(self.id.clone()),
+                        &META,
+                        &values,
+                    ));
+                }
+                formatter.write_str("formatted")
+            }
+        }
+
+        let subscriber = new_subscriber();
+        let metadata = tracing::callsite! {
+            name: "recorded fields",
+            kind: Kind::SPAN,
+            target: module_path!(),
+            level: tracing::Level::INFO,
+            fields: value, count, text
+        }
+        .metadata();
+        let id = subscriber.new_span(&Attributes::new_root(
+            metadata,
+            &tracing::valueset!(
+                metadata.fields(),
+                value = "before",
+                count = 1u64,
+                text = "old"
+            ),
+        ));
+        let (start, start_receiver) = mpsc::channel();
+        let (completed_sender, completed) = mpsc::channel();
+        let probe = FormattingProbe {
+            start,
+            completed,
+            unlocked: core::cell::Cell::new(false),
+            subscriber: &subscriber,
+            id: &id,
+        };
+        std::thread::scope(|scope| {
+            let subscriber_id = subscriber.subscriber_id;
+            let id = &id;
+            let reader = scope.spawn(move || {
+                start_receiver.recv_timeout(Duration::from_secs(5)).unwrap();
+                let spans = SPAN_DATA.read();
+                assert!(spans.contains_key(&(subscriber_id, id.clone())));
+                completed_sender.send(()).unwrap();
+            });
+            subscriber.record(
+                id,
+                &tracing::span::Record::new(&tracing::valueset!(
+                    metadata.fields(),
+                    value = ?probe,
+                    count = 7u64,
+                    text = "after"
+                )),
+            );
+            reader.join().unwrap();
+        });
+        assert!(probe.unlocked.get());
+        {
+            let spans = SPAN_DATA.read();
+            let fields = &spans[&(subscriber.subscriber_id, id.clone())].fields;
+            assert!(fields.iter().any(|field| {
+                field.field == "value"
+                    && matches!(&field.value, ValueTypes::v_str(value) if value == "formatted")
+            }));
+            assert!(fields.iter().any(|field| {
+                field.field == "count" && matches!(&field.value, ValueTypes::v_u64(7))
+            }));
+            assert!(fields.iter().any(|field| {
+                field.field == "text"
+                    && matches!(&field.value, ValueTypes::v_str(value) if value == "after")
+            }));
+        }
+        assert!(subscriber.try_close(id));
     }
 
     #[test]
@@ -655,6 +833,45 @@ mod tests {
     }
 
     #[test]
+    fn unparented_events_bypass_the_map_and_preserve_otel_context() {
+        let subscriber = new_subscriber();
+        let writer = RecordingWriter::default();
+        let (sender, receiver) = mpsc::channel();
+        let guard = SPAN_DATA.write();
+        std::thread::scope(|scope| {
+            let writer = &writer;
+            let reader = scope.spawn(move || {
+                let values = META.fields().value_set(&[]);
+                write_event(
+                    subscriber.subscriber_id,
+                    Pin::new(writer),
+                    &tracing::Event::new(&META, &values),
+                    "event",
+                    1,
+                    0,
+                    None,
+                    Some(SpanStrings {
+                        trace_id: [b'a'; 32],
+                        span_id: [b'b'; 16],
+                        parent_span_id: Some([b'c'; 16]),
+                    }),
+                );
+                sender.send(()).unwrap();
+            });
+            let result = receiver.recv_timeout(Duration::from_secs(5));
+            drop(guard);
+            reader.join().unwrap();
+            result.unwrap();
+        });
+        let (current, related, strings) = writer.0.lock().unwrap().take().unwrap();
+        assert_eq!((current, related), (0, 0));
+        let strings = strings.unwrap();
+        assert_eq!(strings.trace_id, [b'a'; 32]);
+        assert_eq!(strings.span_id, [b'b'; 16]);
+        assert_eq!(strings.parent_span_id, Some([b'c'; 16]));
+    }
+
+    #[test]
     fn forwards_local_and_otel_event_correlation() {
         let subscriber = new_subscriber();
         let parent = new_span(&subscriber, Parent::Root);
@@ -669,7 +886,7 @@ mod tests {
             "event",
             1,
             0,
-            Some(&child),
+            Some(EventSpan::Id(&child)),
             None,
         );
         let (current, related, strings) = writer.0.lock().unwrap().take().unwrap();
@@ -685,6 +902,30 @@ mod tests {
             Some(crate::native::to_hex_utf8_bytes(parent.into_u64()))
         );
 
+        let context = addref_span(subscriber.subscriber_id, &child);
+        write_event(
+            subscriber.subscriber_id,
+            Pin::new(&writer),
+            &event,
+            "event",
+            1,
+            0,
+            Some(EventSpan::Cached(context.ids)),
+            None,
+        );
+        let (current, related, strings) = writer.0.lock().unwrap().take().unwrap();
+        assert_eq!((current, related), (child.into_u64(), parent.into_u64()));
+        let strings = strings.unwrap();
+        assert_eq!(
+            strings.span_id,
+            crate::native::to_hex_utf8_bytes(child.into_u64())
+        );
+        assert_eq!(
+            strings.parent_span_id,
+            Some(crate::native::to_hex_utf8_bytes(parent.into_u64()))
+        );
+        assert!(!subscriber.try_close(child.clone()));
+
         let otel = SpanStrings {
             trace_id: [b'a'; 32],
             span_id: [b'b'; 16],
@@ -697,7 +938,7 @@ mod tests {
             "event",
             1,
             0,
-            Some(&child),
+            Some(EventSpan::Id(&child)),
             Some(otel),
         );
         let (_, _, strings) = writer.0.lock().unwrap().take().unwrap();

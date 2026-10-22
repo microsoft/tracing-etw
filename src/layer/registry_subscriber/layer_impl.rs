@@ -55,7 +55,7 @@ where
             name,
             keyword,
             tag,
-            id.as_ref(),
+            id.as_ref().map(common::EventSpan::Id),
             self.get_otel_span_strings(id.as_ref()),
         )
     }

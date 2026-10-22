@@ -61,6 +61,13 @@ lookups do not acquire a lock.
 Hashing uses explicitly seeded `ahash::RandomState` values. The dependency's
 standard-library and runtime-RNG default features are disabled.
 
+The standalone subscriber caches immutable span IDs, parent IDs, and metadata
+in entered-span stacks. Current-span queries and contextual event correlation
+therefore avoid the shared span map, as do events without a parent span.
+Recorded span values are formatted before acquiring the map lock; replaced
+values and removed span payloads are destroyed after releasing it. Span
+start/stop encoding still borrows the payload under the map lock.
+
 Shared span storage and the Linux provider use blocking read/write locks with
 poisoning when `std` is enabled. Without `std`, Windows uses native `SRWLOCK`
 locks and Linux uses `libc::pthread_rwlock_t`; neither provides lock poisoning.

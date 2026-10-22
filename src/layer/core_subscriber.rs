@@ -25,12 +25,12 @@ pub(crate) fn next_id() -> u64 {
 
 struct EnteredSpan {
     subscriber_id: u64,
-    id: tracing_core::span::Id,
+    context: common::SpanContext,
 }
 
 impl Drop for EnteredSpan {
     fn drop(&mut self) {
-        common::release_span(self.subscriber_id, &self.id);
+        common::release_span(self.subscriber_id, &self.context.id());
     }
 }
 
@@ -40,12 +40,16 @@ crate::tls::thread_local! {
 
 impl<OutMode: OutputMode> _EtwTracingSubscriber<OutMode> {
     fn current_span_id(&self) -> Option<tracing_core::span::Id> {
+        self.current_span_context().map(common::SpanContext::id)
+    }
+
+    fn current_span_context(&self) -> Option<common::SpanContext> {
         ENTERED_SPANS.with_borrow(|spans| {
             spans
                 .iter()
                 .rev()
                 .find(|span| span.subscriber_id == self.subscriber_id)
-                .map(|span| span.id.clone())
+                .map(|span| span.context)
         })
     }
 }
@@ -106,12 +110,9 @@ where
     }
 
     fn current_span(&self) -> tracing_core::span::Current {
-        self.current_span_id()
-            .map_or_else(tracing_core::span::Current::none, |id| {
-                tracing_core::span::Current::new(
-                    id.clone(),
-                    common::span_metadata(self.subscriber_id, &id),
-                )
+        self.current_span_context()
+            .map_or_else(tracing_core::span::Current::none, |context| {
+                tracing_core::span::Current::new(context.id(), context.metadata)
             })
     }
 
@@ -136,9 +137,10 @@ where
         };
 
         let span = if event.is_contextual() {
-            self.current_span_id()
+            self.current_span_context()
+                .map(|context| common::EventSpan::Cached(context.ids))
         } else {
-            event.parent().cloned()
+            event.parent().map(common::EventSpan::Id)
         };
 
         common::write_event(
@@ -148,16 +150,16 @@ where
             name,
             keyword,
             tag,
-            span.as_ref(),
+            span,
             None,
         )
     }
 
     fn enter(&self, id: &tracing_core::span::Id) {
-        common::addref_span(self.subscriber_id, id);
+        let context = common::addref_span(self.subscriber_id, id);
         let entered = EnteredSpan {
             subscriber_id: self.subscriber_id,
-            id: id.clone(),
+            context,
         };
         ENTERED_SPANS.with_borrow_mut(|spans| {
             spans.push(entered);
@@ -178,7 +180,10 @@ where
         let entered = ENTERED_SPANS.with_borrow_mut(|spans| {
             let index = spans
                 .iter()
-                .rposition(|span| span.subscriber_id == self.subscriber_id && span.id == *id)
+                .rposition(|span| {
+                    span.subscriber_id == self.subscriber_id
+                        && span.context.ids.span_id == id.into_non_zero_u64()
+                })
                 .expect("Exit of a span that is not entered on this thread");
             spans.remove(index)
         });

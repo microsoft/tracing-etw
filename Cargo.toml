@@ -17,7 +17,7 @@ doctest = false
 default = ["std", "opentelemetry"]
 std = ["tracing-subscriber/registry", "tracing/std"]
 # Enable OpenTelemetry trace context extraction. When enabled, span_id and trace_id
-# will be extracted from tracing-opentelemetry's OtelData span extensions when available.
+# will be extracted using tracing-opentelemetry's context API when available.
 opentelemetry = ["dep:tracing-opentelemetry", "dep:opentelemetry", "std", "tracing-subscriber/registry"]
 
 [dependencies]
@@ -30,8 +30,9 @@ ahash = {version = "0.8", default-features = false}
 hashbrown = "0.17"
 
 # Optional OpenTelemetry dependencies
-tracing-opentelemetry = {version = "0.32", optional = true}
-opentelemetry = {version = "0.33", optional = true, default-features = false, features = ["trace"]}
+tracing-opentelemetry = {version = "0.33", optional = true}
+# Match the OpenTelemetry API version used by tracing-opentelemetry.
+opentelemetry = {version = "0.32", optional = true, default-features = false, features = ["trace"]}
 
 [target.'cfg(not(target_os = "linux"))'.dependencies]
 tracelogging = ">= 1.2.0"

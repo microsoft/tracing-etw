@@ -1,43 +1,39 @@
 //! OpenTelemetry integration helpers.
 //!
-//! This module provides utilities for extracting OpenTelemetry trace context
-//! from tracing span extensions when the `opentelemetry` feature is enabled.
+//! Extracts OpenTelemetry trace context through tracing-opentelemetry's public API.
 
 use std::io::{Cursor, Write};
 
-use tracing_subscriber::registry::LookupSpan;
+use opentelemetry::trace::TraceContextExt;
+use tracing::{Dispatch, span::Id};
 
 use crate::layer::common::OtelSpanStrings;
 
-// Attempt to read the `OtelData` span extension that is set by
-// `tracing-opentelemetry` and extract the trace_id and span_id from it.
-pub(crate) fn get_otel_span_data<'a, R>(span: &tracing_subscriber::registry::SpanRef<'a, R>) -> Option<OtelSpanStrings>
-where
-    R: LookupSpan<'a>,
-{
-    let extensions = span.extensions();
-    if let Some(otel_data) = extensions.get::<tracing_opentelemetry::OtelData>() {
-        let mut ctx = OtelSpanStrings {
-            trace_id: [0u8; 32],
-            span_id: [0u8; 16],
-            parent_span_id: None,
-        };
-
-        // Format IDs while avoiding heap allocations
-
-        if let Some(trace_id) = otel_data.trace_id() {
-            let mut trace_id_cursor = Cursor::new(&mut ctx.trace_id[..]);
-            let _ = write!(trace_id_cursor, "{:032x}", trace_id); // Ignore errors since we're writing to a fixed-size buffer
-        }
-
-        if let Some(span_id) = otel_data.span_id() {
-            let mut span_id_cursor = Cursor::new(&mut ctx.span_id[..]);
-            let _ = write!(span_id_cursor, "{:016x}", span_id); // Ignore errors since we're writing to a fixed-size buffer
-        }
-
-        Some(ctx)
+pub(crate) fn get_otel_span_data(id: &Id, dispatch: &Dispatch) -> Option<OtelSpanStrings> {
+    // This API can activate the span, so no registry extension lock may be held.
+    let context = tracing_opentelemetry::get_otel_context(id, dispatch)?;
+    let span = context.span();
+    let span_context = span.span_context();
+    if !span_context.is_valid() {
+        return None;
     }
-    else {
-        None
-    }
+
+    let mut ctx = OtelSpanStrings {
+        trace_id: [0u8; 32],
+        span_id: [0u8; 16],
+        parent_span_id: None,
+    };
+    write!(
+        Cursor::new(&mut ctx.trace_id[..]),
+        "{:032x}",
+        span_context.trace_id()
+    )
+    .expect("A trace ID fits in 32 hexadecimal bytes");
+    write!(
+        Cursor::new(&mut ctx.span_id[..]),
+        "{:016x}",
+        span_context.span_id()
+    )
+    .expect("A span ID fits in 16 hexadecimal bytes");
+    Some(ctx)
 }

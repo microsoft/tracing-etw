@@ -260,6 +260,8 @@ impl<OutMode: OutputMode + 'static> LayerBuilder<OutMode> {
             ),
             default_keyword: self.default_keyword,
             subscriber_id: crate::layer::core_subscriber::next_id(),
+            #[cfg(feature = "opentelemetry")]
+            dispatch: Default::default(),
             _p: PhantomData,
         };
 
@@ -304,6 +306,8 @@ impl<OutMode: OutputMode + 'static> LayerBuilder<OutMode> {
             ),
             default_keyword: self.default_keyword,
             subscriber_id: crate::layer::core_subscriber::next_id(),
+            #[cfg(feature = "opentelemetry")]
+            dispatch: Default::default(),
             _p: PhantomData,
         })
     }
@@ -378,6 +382,8 @@ impl<OutMode: OutputMode + 'static> LayerBuilder<OutMode> {
             ),
             default_keyword: self.default_keyword,
             subscriber_id: crate::layer::core_subscriber::next_id(),
+            #[cfg(feature = "opentelemetry")]
+            dispatch: Default::default(),
             _p: PhantomData,
         };
 
@@ -410,6 +416,8 @@ impl<OutMode: OutputMode + 'static> LayerBuilder<OutMode> {
             ),
             default_keyword: self.default_keyword,
             subscriber_id: crate::layer::core_subscriber::next_id(),
+            #[cfg(feature = "opentelemetry")]
+            dispatch: Default::default(),
             _p: PhantomData,
         };
 

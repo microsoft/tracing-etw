@@ -26,7 +26,7 @@ tracing-core = {version = "0.1", default-features = false}
 tracing-subscriber = {version="0.3", default-features = false, optional = true}
 paste = "1"
 thiserror = {version="2", default-features = false}
-ahash = "0.8"
+ahash = {version = "0.8", default-features = false}
 hashbrown = "0.17"
 
 # Optional OpenTelemetry dependencies

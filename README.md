@@ -70,7 +70,8 @@ Activity-seed and event-metadata initialization use the same native blocking
 locks on Windows and Linux, with no spin-lock dependency. Other targets retain
 standard-library synchronization for the no-op exporter. These paths are not
 interrupt-safe or reentrant. Lazy initialization remains poisoned if its
-initializer panics.
+initializer panics. Once initialized, lazy values use an Acquire/Release atomic
+publication fast path and do not acquire a native lock on subsequent reads.
 
 Wall-clock timestamps use Windows `GetSystemTimePreciseAsFileTime` (`FILETIME`)
 or Unix `clock_gettime(CLOCK_REALTIME)` (`timespec`), without Rust standard-library
@@ -80,6 +81,34 @@ Other targets retain the no-op exporter and do not emit timestamps.
 ## MSV
 
 Minimum supported Rust version is 1.85 (edition 2024).
+
+## ETW benchmarks
+
+On Windows, compare the registry-backed `std` implementation with the
+standalone `no_std` implementation using separate feature builds:
+
+```text
+cargo bench --bench etw --no-default-features --features std -- --save-baseline std
+cargo bench --bench etw --no-default-features -- --baseline std
+```
+
+The second run compares `no_std` against the saved `std` results. Benchmark
+IDs are identical across configurations, and the startup banner identifies
+the active implementation. Disable default features in both commands to
+exclude OpenTelemetry from the comparison.
+
+The `disabled` group uses normal provider filtering. The `unfiltered` groups
+force span/event processing in both implementations, including native event
+construction, without requiring an ETW collector. These groups do not measure
+the disabled-call fast path and do not imply that events were collected.
+Keep external collectors stopped for a collector-free comparison; collecting
+the `etw_bench` provider adds native ETW delivery costs. The
+`etw_bench_disabled` provider must remain disabled.
+
+Criterion and the benchmark harness use `std` in both runs; `no_std` refers
+to the library's feature configuration, native locks/TLS, and standalone
+span tracking. Use `-- --test` instead of the baseline arguments for a quick
+execution of every benchmark case.
 
 ## no_std coverage
 

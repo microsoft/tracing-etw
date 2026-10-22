@@ -7,26 +7,8 @@ use windows_sys::Win32::{
 // Keys are process-lifetime: freeing one would invalidate other threads' slots.
 pub(super) struct Key(u32);
 
-struct LastError(u32);
-
-impl LastError {
-    fn save() -> Self {
-        // SAFETY: GetLastError reads the calling thread's error code.
-        Self(unsafe { GetLastError() })
-    }
-}
-
-impl Drop for LastError {
-    fn drop(&mut self) {
-        // SAFETY: Restore the calling thread's error code so logging's TLS
-        // bookkeeping does not overwrite the error being reported.
-        unsafe { SetLastError(self.0) };
-    }
-}
-
 impl Key {
     pub(super) fn new<T: 'static>() -> Self {
-        let _last_error = LastError::save();
         // SAFETY: The callback matches the type stored by LocalKey<T>.
         let key = unsafe { FlsAlloc(Some(destroy::<T>)) };
         assert!(key != FLS_OUT_OF_INDEXES, "FlsAlloc failed: {}", unsafe {
@@ -36,7 +18,6 @@ impl Key {
     }
 
     pub(super) fn get(&self) -> *mut c_void {
-        let _last_error = LastError::save();
         // SAFETY: The key is allocated once and is never freed. Null means no
         // value, including a new fiber without an allocated FLS data block
         // (for which Windows also sets ERROR_INVALID_PARAMETER).
@@ -44,7 +25,6 @@ impl Key {
     }
 
     pub(super) fn set(&self, value: *mut c_void) {
-        let _last_error = LastError::save();
         // SAFETY: The key remains valid; value is a live allocation, null, or
         // the initialization/destruction sentinel.
         assert!(

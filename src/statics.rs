@@ -143,10 +143,11 @@ pub(crate) fn get_event_metadata(
     id: &tracing::callsite::Identifier,
 ) -> Option<&'static crate::_details::EventMetadata> {
     let identity_hash = HASHER.hash_one(id);
-    let idx = EVENT_METADATA.partition_point(|other| other.identity_hash > identity_hash);
+    let metadata: &[ParsedEventMetadata] = &EVENT_METADATA;
+    let idx = metadata.partition_point(|other| other.identity_hash > identity_hash);
     let mut cur = idx;
-    while cur < EVENT_METADATA.len() {
-        let meta = &EVENT_METADATA[cur];
+    while cur < metadata.len() {
+        let meta = &metadata[cur];
         if meta.identity_hash != identity_hash {
             return None;
         }
@@ -170,11 +171,12 @@ impl Iterator for EventMetadataEnumerator {
     type Item = &'static EventMetadata;
 
     fn next(&mut self) -> Option<Self::Item> {
-        if self.current_index >= EVENT_METADATA.len() {
+        let metadata: &[ParsedEventMetadata] = &EVENT_METADATA;
+        if self.current_index >= metadata.len() {
             return None;
         }
 
-        let result = &EVENT_METADATA[self.current_index].meta;
+        let result = &metadata[self.current_index].meta;
 
         self.current_index += 1;
 

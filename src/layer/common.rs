@@ -153,10 +153,11 @@ pub(crate) fn create_span_data_for_new_span(
             i += 1;
         }
 
+        let activity_seed = *GLOBAL_ACTIVITY_SEED;
         SpanData {
             fields: v.into_boxed_slice(),
-            activity_id: *GLOBAL_ACTIVITY_SEED,
-            related_activity_id: *GLOBAL_ACTIVITY_SEED,
+            activity_id: activity_seed,
+            related_activity_id: activity_seed,
             start_time: Timestamp::UNIX_EPOCH,
             metadata,
             ids: SpanIds {

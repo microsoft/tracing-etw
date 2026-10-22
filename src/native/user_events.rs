@@ -311,7 +311,8 @@ impl<Mode: OutputMode> super::EventWriter<NormalOutput> for Provider<Mode> {
             self.register_set(Self::map_level(level), keyword)
         };
 
-        let mut activity_id: [u8; 16] = *GLOBAL_ACTIVITY_SEED;
+        let activity_seed = *GLOBAL_ACTIVITY_SEED;
+        let mut activity_id: [u8; 16] = activity_seed;
         activity_id[0] = if current_span != 0 {
             let (_, half) = activity_id.split_at_mut(8);
             half.copy_from_slice(&current_span.to_le_bytes());
@@ -320,7 +321,7 @@ impl<Mode: OutputMode> super::EventWriter<NormalOutput> for Provider<Mode> {
             0
         };
 
-        let mut related_activity_id: [u8; 16] = *GLOBAL_ACTIVITY_SEED;
+        let mut related_activity_id: [u8; 16] = activity_seed;
         related_activity_id[0] = if parent_span != 0 {
             let (_, half) = related_activity_id.split_at_mut(8);
             half.copy_from_slice(&parent_span.to_le_bytes());

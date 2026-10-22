@@ -1,6 +1,7 @@
 use super::*;
 use core::sync::atomic::{AtomicUsize, Ordering};
 use std::{
+    boxed::Box,
     panic::{AssertUnwindSafe, catch_unwind},
     sync::{Barrier, mpsc},
     thread,
@@ -94,4 +95,43 @@ fn failed_lazy_initialization_remains_poisoned() {
     });
     assert!(catch_unwind(AssertUnwindSafe(|| *lazy)).is_err());
     assert_eq!(CALLS.load(Ordering::SeqCst), 1);
+}
+
+#[test]
+fn initialized_lazy_values_survive_moves() {
+    let mut values = [LazyLock::new(|| 42), LazyLock::new(|| 99)];
+    assert_eq!(*values[0], 42);
+    assert_eq!(*values[1], 99);
+    values.swap(0, 1);
+    assert_eq!(*values[0], 99);
+    assert_eq!(*values[1], 42);
+}
+
+#[test]
+fn lazy_values_drop_once_without_initializing_on_drop() {
+    static CALLS: AtomicUsize = AtomicUsize::new(0);
+    static DROPS: AtomicUsize = AtomicUsize::new(0);
+
+    struct Value;
+    impl Drop for Value {
+        fn drop(&mut self) {
+            DROPS.fetch_add(1, Ordering::SeqCst);
+        }
+    }
+    fn initialize() -> Value {
+        CALLS.fetch_add(1, Ordering::SeqCst);
+        Value
+    }
+
+    drop(LazyLock::new(initialize));
+    assert_eq!(CALLS.load(Ordering::SeqCst), 0);
+    assert_eq!(DROPS.load(Ordering::SeqCst), 0);
+
+    let lazy = LazyLock::new(initialize);
+    let _ = &*lazy;
+    let moved = Box::new(lazy);
+    assert_eq!(DROPS.load(Ordering::SeqCst), 0);
+    drop(moved);
+    assert_eq!(CALLS.load(Ordering::SeqCst), 1);
+    assert_eq!(DROPS.load(Ordering::SeqCst), 1);
 }

@@ -184,9 +184,11 @@
 #![cfg_attr(docsrs, feature(doc_cfg))]
 #![cfg_attr(not(feature = "std"), no_std)]
 
-// Native writers require standard-library thread-local storage even
-// when the tracing-subscriber registry integration is disabled.
-#[cfg(not(feature = "std"))]
+// Tests and the no-op exporter on other platforms still use std.
+#[cfg(all(
+    not(feature = "std"),
+    any(test, not(any(windows, target_os = "linux")))
+))]
 extern crate std;
 
 mod layer_builder;
@@ -196,6 +198,7 @@ mod layer_builder;
 pub mod native;
 mod statics;
 mod sync;
+mod tls;
 mod values;
 // Module holding internal details that need to be public but should not be directly used by consumers of the crate.
 #[doc(hidden)]

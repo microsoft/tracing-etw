@@ -29,12 +29,23 @@ children retain span data until their references are released. Contextual
 children and events use the currently entered span; explicit parents and
 explicit roots override that context.
 
-Disabling the `std` feature removes the registry integration, not the native
-backends' platform standard-library requirement. Native writers still use
-standard-library thread-local storage; this is not
-support for a freestanding `no_std` target. The default `opentelemetry` feature
-also enables `std`, so disable default features to select the standalone-only
-configuration.
+Disabling the `std` feature selects `no_std + alloc` on Windows and Linux.
+The native backends still require operating-system services and an allocator;
+this is not support for a freestanding `no_std` target. The default
+`opentelemetry` feature also enables `std`, so disable default features to
+select the standalone-only configuration.
+
+Without `std`, span stacks and reusable event builders use Windows FLS slots
+or Linux pthread keys. Values are initialized on first access and dropped by
+native thread-exit callbacks, releasing references held by entered spans.
+Windows FLS also isolates values between fibers and runs cleanup on fiber
+deletion. Recursive initialization and access during destruction panic.
+Native keys live for the process lifetime; per-thread values are freed at
+exit. With `std`, standard-library thread-local storage is unchanged.
+Cleanup follows native thread/fiber teardown; process termination does not
+guarantee that destructors run.
+Native keys are published atomically after initialization, so subsequent key
+lookups do not acquire a lock.
 
 Hashing uses explicitly seeded `ahash::RandomState` values. The dependency's
 standard-library and runtime-RNG default features are disabled.

@@ -34,7 +34,7 @@ impl Drop for EnteredSpan {
     }
 }
 
-std::thread_local! {
+crate::tls::thread_local! {
     static ENTERED_SPANS: RefCell<Vec<EnteredSpan>> = const { RefCell::new(Vec::new()) };
 }
 
@@ -155,11 +155,12 @@ where
 
     fn enter(&self, id: &tracing_core::span::Id) {
         common::addref_span(self.subscriber_id, id);
+        let entered = EnteredSpan {
+            subscriber_id: self.subscriber_id,
+            id: id.clone(),
+        };
         ENTERED_SPANS.with_borrow_mut(|spans| {
-            spans.push(EnteredSpan {
-                subscriber_id: self.subscriber_id,
-                id: id.clone(),
-            });
+            spans.push(entered);
         });
         // Spans don't have callsites to store keyword/tag metadata on,
         // so we must use the defaults.
@@ -192,5 +193,36 @@ where
             None,
         );
         drop(entered);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use tracing_core::{Subscriber, callsite::Callsite};
+
+    #[test]
+    fn releases_the_entered_reference_if_tls_access_panics() {
+        let builder = crate::LayerBuilder::new("FailedEnterTests");
+        #[cfg(feature = "std")]
+        let subscriber = builder.build_subscriber().unwrap();
+        #[cfg(not(feature = "std"))]
+        let subscriber = builder.build().unwrap();
+        let metadata = tracing::callsite! {
+            name: "failed span entry",
+            kind: tracing::metadata::Kind::SPAN,
+            target: module_path!(),
+            level: tracing::Level::INFO,
+            fields:
+        }
+        .metadata();
+        let values = metadata.fields().value_set(&[]);
+        let id = subscriber.new_span(&tracing_core::span::Attributes::new_root(metadata, &values));
+        let result = ENTERED_SPANS.with_borrow_mut(|_| {
+            std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| subscriber.enter(&id)))
+        });
+        assert!(result.is_err());
+        assert!(subscriber.current_span().id().is_none());
+        assert!(subscriber.try_close(id));
     }
 }

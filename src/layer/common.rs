@@ -548,17 +548,20 @@ mod tests {
     #[test]
     fn releases_entered_references_when_a_thread_exits() {
         let subscriber = new_subscriber();
-        let id = new_span(&subscriber, Parent::Root);
-        std::thread::scope(|scope| {
-            scope
-                .spawn(|| {
-                    subscriber.enter(&id);
-                    assert!(!subscriber.try_close(id.clone()));
-                })
-                .join()
-                .unwrap();
-        });
-        assert!(!contains(subscriber.subscriber_id, &id));
+        for should_panic in [false, true] {
+            let id = new_span(&subscriber, Parent::Root);
+            std::thread::scope(|scope| {
+                let result = scope
+                    .spawn(|| {
+                        subscriber.enter(&id);
+                        assert!(!subscriber.try_close(id.clone()));
+                        assert!(!should_panic, "Testing thread-exit cleanup after a panic");
+                    })
+                    .join();
+                assert_eq!(result.is_err(), should_panic);
+            });
+            assert!(!contains(subscriber.subscriber_id, &id));
+        }
     }
 
     #[test]

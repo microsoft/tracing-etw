@@ -24,7 +24,7 @@ pub(crate) static mut _stop__etw_kw: usize = 0;
 
 pub(crate) type ProviderGroupType = crate::native::native_guid;
 
-std::thread_local! {static EBW: RefCell<EventBuilder>  = RefCell::new(EventBuilder::new());}
+crate::tls::thread_local! {static EBW: RefCell<EventBuilder>  = RefCell::new(EventBuilder::new());}
 
 struct Win32SystemTime {
     st: [u16; 8],

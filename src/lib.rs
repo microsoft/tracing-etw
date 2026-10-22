@@ -41,7 +41,30 @@
 //! The [decode_perf](https://github.com/microsoft/LinuxTracepoints/tree/main/libeventheader-decode-cpp)
 //! sample tool can be used to do this currently; in the future support will be added to additional tools.
 //!
+//! ## Features and no_std
+//!
+//! Default features enable `std` and OpenTelemetry integration. Disabling default
+//! features selects a standalone subscriber using `no_std + alloc` on Windows
+//! and Linux. Native OS services and an allocator are still required; this is
+//! not support for freestanding targets. Other platforms retain a std-backed
+//! no-op exporter. The `opentelemetry` feature always enables `std`.
+//!
+//! ```toml
+//! [dependencies]
+//! tracing-etw = { version = "0.3", default-features = false }
+//! tracing = { version = "0.1", default-features = false }
+//! ```
+//!
+//! Without `std`, [LayerBuilder::build] constructs the standalone subscriber;
+//! [LayerBuilder::build_subscriber] explicitly selects it in either configuration.
+//! Install it with `tracing::subscriber::set_global_default`. Span context and
+//! event builders use native thread-local storage with exit cleanup (fiber-local
+//! storage on Windows). No-std executables supply their own panic handler and
+//! native startup, as well as their allocator.
+//!
 //! ## Example
+//!
+//! This example uses the default, registry-enabled feature configuration.
 //!
 //! ```no_run
 //! use tracing::{event, Level};
@@ -148,7 +171,8 @@
 //!   until the process exits; if this crate is used in a dynamic library that unloads
 //!   before the process exits, the memory will be leaked.
 //!
-//! - A thread-local event builder is allocated for each thread that logs an event.
+//! - A thread-local event builder is allocated for each thread that logs an event
+//!   (each Windows fiber when `std` is disabled).
 //!   This allows for complete thread safety when logging events. This allocation
 //!   will stay alive until the thread ends. Additionally, the builder itself will allocate
 //!   scratch space for constructing the event. This scratch space will grow to fit the
@@ -167,7 +191,8 @@
 //! - [win_etw_tracing](https://crates.io/crates/win_etw_tracing): This crate should be
 //!   considered superseded by `tracing-etw` when it comes to utilizing it with `tracing`.
 //!   For logging directly to ETW without going through `tracing` it may still be used, though
-//!   the ETW team recommends using the [tracelogging] crate for this instead, as it allows the use
+//!   the ETW team recommends using the [tracelogging](https://crates.io/crates/tracelogging)
+//!   crate for this instead, as it allows the use
 //!   of features such as keywords, which are considered best practice for ETW events.
 //! - OpenTelemetry ETW / user_events exporters with `tracing-opentelemetry` layer: These crates
 //!   have significant performance overhead, and sending events through OpenTelemetry adds additional
@@ -217,8 +242,8 @@ mod layer;
 #[macro_export]
 macro_rules! etw_event {
     (target: $target:expr, name: $name:expr, $lvl:expr, $kw:expr, $tags:expr, { $($fields:tt)* } )=> ({
+        use $crate::_details::{paste, tracing, tracing_core};
         use tracing::Callsite;
-        use paste::paste;
 
         static CALLSITE: tracing::callsite::DefaultCallsite =
             tracing::callsite::DefaultCallsite::new(

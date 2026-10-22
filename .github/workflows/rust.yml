@@ -27,6 +27,7 @@ jobs:
             ~/.cargo/registry/cache/
             ~/.cargo/git/db/
             target/
+            tests/no_std/target/
         key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
     - name: Output rust version for educational purposes
       run: rustup --version
@@ -36,6 +37,13 @@ jobs:
       run: cargo test --verbose
     - name: Run standalone subscriber tests
       run: cargo test --no-default-features
+    - name: Run isolated no-std consumer
+      working-directory: tests/no_std
+      run: cargo run --release
+    - name: Check no-std documentation
+      env:
+        RUSTDOCFLAGS: "-D rustdoc::broken_intra_doc_links"
+      run: cargo doc --lib --no-deps --no-default-features
 
   linux-build:
     runs-on: ubuntu-latest
@@ -49,3 +57,10 @@ jobs:
         run: cargo test --verbose
       - name: Run standalone subscriber tests
         run: cargo test --no-default-features
+      - name: Run isolated no-std consumer
+        working-directory: tests/no_std
+        run: cargo run --release
+      - name: Check no-std documentation
+        env:
+          RUSTDOCFLAGS: "-D rustdoc::broken_intra_doc_links"
+        run: cargo doc --lib --no-deps --no-default-features

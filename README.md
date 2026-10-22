@@ -35,6 +35,17 @@ this is not support for a freestanding `no_std` target. The default
 `opentelemetry` feature also enables `std`, so disable default features to
 select the standalone-only configuration.
 
+```toml
+[dependencies]
+tracing-etw = { version = "0.3", default-features = false }
+tracing = { version = "0.1", default-features = false }
+```
+
+Use `LayerBuilder::build()` or `build_subscriber()` and install the subscriber
+with `tracing::subscriber::set_global_default`. A no-std executable must also
+provide its panic handler and native startup, in addition to an allocator.
+Neither `tracing-subscriber` nor OpenTelemetry is required in this configuration.
+
 Without `std`, span stacks and reusable event builders use Windows FLS slots
 or Linux pthread keys. Values are initialized on first access and dropped by
 native thread-exit callbacks, releasing references held by entered spans.
@@ -68,7 +79,23 @@ Other targets retain the no-op exporter and do not emit timestamps.
 
 ## MSV
 
-Minimum supported Rust version is 1.82 (released October 2024).
+Minimum supported Rust version is 1.85 (edition 2024).
+
+## no_std coverage
+
+`cargo test --no-default-features` exercises the standalone subscriber, but its
+test harness and dev dependencies use `std`. The separate consumer in
+`tests/no_std` avoids that feature unification and links and runs without Rust
+`std`, using a native allocator, panic handler, C startup, and OS thread.
+It exercises both output modes, span lifetime/current-span tracking, native
+thread-exit cleanup, and the exported event macro without extra helper
+dependencies. Its panic handler makes an accidental transitive `std` dependency
+a compile error.
+The release profile uses aborting panics and LTO to discard unused unwind
+references from the prebuilt Linux `alloc` library.
+
+CI runs this consumer on Windows and Linux. Run it locally with
+`cargo run --release --manifest-path tests/no_std/Cargo.toml`.
 
 [etw]: https://learn.microsoft.com/windows/win32/etw/about-event-tracing
 [eventheader]: https://github.com/microsoft/LinuxTracepoints/tree/main/libeventheader-tracepoint

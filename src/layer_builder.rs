@@ -2,11 +2,11 @@ use core::marker::PhantomData;
 extern crate alloc;
 use alloc::{boxed::Box, string::ToString};
 
-#[cfg(any(feature = "std", docsrs))]
+#[cfg(feature = "std")]
 use tracing::Subscriber;
-#[allow(unused_imports)] // Many imports are used exclusively by feature-gated code
+#[cfg(feature = "std")]
 use tracing::metadata::LevelFilter;
-#[cfg(any(feature = "std", docsrs))]
+#[cfg(feature = "std")]
 #[allow(unused_imports)]
 use tracing_subscriber::{
     filter::{FilterExt, Filtered, Targets, combinator::And},
@@ -17,13 +17,13 @@ use tracing_subscriber::{
 use crate::layer::_EtwTracingSubscriber;
 
 use crate::error::EtwError;
-#[cfg(any(feature = "std", docsrs))]
+#[cfg(feature = "std")]
 use crate::layer::registry_subscriber::EtwFilter;
 use crate::native::{
     CommonSchemaOutput, EventWriter, GuidWrapper, NormalOutput, OutputMode, ProviderTraits,
 };
 
-/// Builds a [tracing_subscriber::Layer] that will logs events from a single
+/// Builds a tracing layer or standalone [tracing::Subscriber] for a single
 /// ETW or user_events provider. Use [LayerBuilder::new] to construct a new
 /// builder for the given provider name. Use the `with_*` methods to set
 /// additional properties for the provider, such as the keyword to use
@@ -36,8 +36,8 @@ use crate::native::{
 ///
 /// Multiple `tracing_etw` layers can be created at the same time,
 /// with different provider names/IDs, keywords, or output formats.
-/// [Target filters][tracing_subscriber::filter] can then be used to direct
-/// specific events to specific layers.
+/// With `std`, [target filters](https://docs.rs/tracing-subscriber/latest/tracing_subscriber/filter/index.html)
+/// can then be used to direct specific events to specific layers.
 pub struct LayerBuilder<OutMode: OutputMode> {
     provider_name: Box<str>,
     provider_id: GuidWrapper,
@@ -208,7 +208,7 @@ impl<OutMode: OutputMode + 'static> LayerBuilder<OutMode> {
         })
     }
 
-    #[cfg(any(feature = "std", docsrs))]
+    #[cfg(feature = "std")]
     fn build_target_filter(&self, target: &'static str) -> Targets {
         let mut targets = Targets::new().with_target(&*self.provider_name, LevelFilter::TRACE);
 
@@ -220,7 +220,7 @@ impl<OutMode: OutputMode + 'static> LayerBuilder<OutMode> {
     }
 
     // The filter is responsible for the enabled checks for the layer
-    #[cfg(any(feature = "std", docsrs))]
+    #[cfg(feature = "std")]
     fn build_filter<S>(&self, layer: _EtwTracingSubscriber<OutMode, S>) -> EtwFilter<S, OutMode>
     where
         S: Subscriber + for<'a> LookupSpan<'a>,
@@ -230,7 +230,7 @@ impl<OutMode: OutputMode + 'static> LayerBuilder<OutMode> {
 
     /// Constructs a [tracing_subscriber::Layer] implementation.
     ///
-    /// This layer includes a [tracing_subscriber::Filter] that reports to `tracing` when
+    /// This layer includes a [tracing_subscriber::layer::Filter] that reports to `tracing` when
     /// an event is enabled to a ETW/user_events collector. Disabled events can then be more
     /// efficiently skipped over.
     ///
@@ -244,7 +244,7 @@ impl<OutMode: OutputMode + 'static> LayerBuilder<OutMode> {
     ///
     #[allow(clippy::type_complexity)]
     #[cfg_attr(docsrs, doc(cfg(feature = "std")))]
-    #[cfg(any(feature = "std", docsrs))]
+    #[cfg(feature = "std")]
     pub fn build_layer<S>(
         self,
     ) -> Result<Filtered<_EtwTracingSubscriber<OutMode, S>, EtwFilter<S, OutMode>, S>, EtwError>
@@ -272,19 +272,23 @@ impl<OutMode: OutputMode + 'static> LayerBuilder<OutMode> {
     }
 
     /// Constructs a [tracing_core::Subscriber] implementation.
-    /// Prefer [self::build_layer] when `tracing_subscriber::Registry` can be used.
+    #[cfg_attr(
+        feature = "std",
+        doc = "Prefer [Self::build_layer] when `tracing_subscriber::Registry` can be used."
+    )]
     /// This subscriber manages its own span IDs, per-thread entered-span context,
     /// and reference-counted span lifetime, including retaining parents of live children.
     ///
     /// It checks native provider enablement directly, without per-layer filtering.
     /// Disabling the crate's `std` feature selects this implementation in `build()`,
-    /// but the native writers still require the platform standard library.
+    /// using `no_std + alloc` with native operating-system services on Windows
+    /// and Linux. Other targets retain a standard-library-backed no-op exporter.
     ///
     /// ```
-    /// let built_layer = tracing_etw::LayerBuilder::new("SampleProviderName").build();
-    /// assert!(built_layer.is_ok());
-    /// # let dispatch = tracing_core::Dispatch::new(layer);
-    /// # tracing_core::dispatcher::set_global_default(dispatch).expect("Set dispatcher");
+    /// let subscriber = tracing_etw::LayerBuilder::new("SampleProviderName")
+    ///     .build_subscriber()
+    ///     .unwrap();
+    /// tracing::subscriber::set_global_default(subscriber).expect("Set subscriber");
     /// ```
     ///
     #[allow(clippy::type_complexity)]
@@ -307,9 +311,10 @@ impl<OutMode: OutputMode + 'static> LayerBuilder<OutMode> {
         })
     }
 
+    /// Constructs a standalone subscriber, equivalent to [Self::build_subscriber].
     #[allow(clippy::type_complexity)]
     #[cfg_attr(docsrs, doc(cfg(not(feature = "std"))))]
-    #[cfg(any(not(feature = "std"), docsrs))]
+    #[cfg(not(feature = "std"))]
     pub fn build(self) -> Result<_EtwTracingSubscriber<OutMode>, EtwError>
     where
         crate::native::Provider<OutMode>: ProviderTraits + EventWriter<OutMode>,
@@ -319,7 +324,7 @@ impl<OutMode: OutputMode + 'static> LayerBuilder<OutMode> {
 
     #[allow(clippy::type_complexity)]
     #[cfg_attr(docsrs, doc(cfg(feature = "std")))]
-    #[cfg(any(feature = "std", docsrs))]
+    #[cfg(feature = "std")]
     pub fn build<S>(
         self,
     ) -> Result<Filtered<_EtwTracingSubscriber<OutMode, S>, EtwFilter<S, OutMode>, S>, EtwError>
@@ -353,7 +358,7 @@ impl<OutMode: OutputMode + 'static> LayerBuilder<OutMode> {
     ///
     #[allow(clippy::type_complexity)]
     #[cfg_attr(docsrs, doc(cfg(feature = "std")))]
-    #[cfg(any(feature = "std", docsrs))]
+    #[cfg(feature = "std")]
     pub fn build_with_target<S>(
         self,
         target: &'static str,
@@ -391,7 +396,7 @@ impl<OutMode: OutputMode + 'static> LayerBuilder<OutMode> {
     #[doc(hidden)]
     #[allow(clippy::type_complexity)]
     #[cfg_attr(docsrs, doc(cfg(feature = "std")))]
-    #[cfg(any(feature = "std", docsrs))]
+    #[cfg(feature = "std")]
     pub fn __build_for_test<S>(self) -> Result<_EtwTracingSubscriber<OutMode, S>, EtwError>
     where
         S: Subscriber + for<'a> LookupSpan<'a>,

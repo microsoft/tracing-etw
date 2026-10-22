@@ -47,7 +47,7 @@ impl<OutMode: OutputMode, S> Clone for _EtwTracingSubscriber<OutMode, S> {
 }
 
 pub mod core_subscriber;
-#[cfg(any(feature = "std", docsrs))]
+#[cfg(feature = "std")]
 pub mod registry_subscriber;
 
 pub(crate) mod common;

@@ -89,5 +89,6 @@ impl<T: AddFieldAndValue> field::Visit for EventBuilderVisitorWrapper<T> {
     }
 
     #[cfg(feature = "std")]
-    fn record_error(&mut self, _field: &field::Field, _value: &(dyn std::error::Error + 'static)) {}
+    fn record_error(&mut self, _field: &field::Field, _value: &(dyn core::error::Error + 'static)) {
+    }
 }

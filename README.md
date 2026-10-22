@@ -36,6 +36,9 @@ support for a freestanding `no_std` target. The default `opentelemetry` feature
 also enables `std`, so disable default features to select the standalone-only
 configuration.
 
+Hashing uses explicitly seeded `ahash::RandomState` values. The dependency's
+standard-library and runtime-RNG default features are disabled.
+
 Shared span storage and the Linux provider use blocking read/write locks with
 poisoning when `std` is enabled. Without `std`, Windows uses native `SRWLOCK`
 locks and Linux uses `libc::pthread_rwlock_t`; neither provides lock poisoning.

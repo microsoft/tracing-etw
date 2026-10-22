@@ -120,7 +120,7 @@
 //! - Each `tracing-etw::Layer` that is added will heap allocate some internal state
 //!   when `build` is called.
 //!
-//! - Logging events with the [Debug][std::fmt::Debug] format specifier (`:?`) will
+//! - Logging events with the [Debug][core::fmt::Debug] format specifier (`:?`) will
 //!   necessitate a heap allocation to format the value into a string.
 //!
 //! <div class="warning">

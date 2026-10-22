@@ -1,4 +1,6 @@
-use std::{marker::PhantomData, pin::Pin, sync::Arc};
+use core::{marker::PhantomData, pin::Pin};
+extern crate alloc;
+use alloc::sync::Arc;
 
 use crate::error::EtwError;
 

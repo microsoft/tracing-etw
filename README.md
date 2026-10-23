@@ -82,17 +82,20 @@ Each shard can reuse up to four fully released entry allocations. Reuse requires
 exclusive allocation ownership, clears recorded fields before caching, and
 never recycles an entry still referenced by an entered handle or memory borrow.
 The registry-backed layer retains inline span payloads under shard locks;
-it does not pay for standalone entry allocations or per-entry locks.
+it does not pay for standalone entry allocations or per-entry locks. The two
+integrations have separate, statically selected storage and lifetime paths,
+without per-access storage-kind dispatch. Both APIs remain available together
+when `std` is enabled.
 
 Standalone span IDs are allocated in thread/fiber-local batches of up to 1024
 from the same global counter used for subscriber IDs. Batches share the existing
 span-stack TLS slot; IDs remain globally unique and nonzero, but unused IDs in
 a batch are not recycled at thread/fiber exit.
 
-Span storage uses 32 independently locked, cache-line-aligned shards selected
-by a hash of the full `(subscriber_id, span_id)` key. Each lookup hashes the
-key once and reuses that hash for map access. Shard selection uses middle
-hash bits, leaving the map's bucket and control-byte bits independent.
+Each storage backend uses 32 independently locked, cache-line-aligned shards
+selected by a hash of the full `(subscriber_id, span_id)` key. Each lookup
+hashes the key once and reuses that hash for map access. Shard selection uses
+middle hash bits, leaving the map's bucket and control-byte bits independent.
 Parent/child creation locks distinct shards in ascending index order;
 cascading close operations release each shard before accessing the parent.
 

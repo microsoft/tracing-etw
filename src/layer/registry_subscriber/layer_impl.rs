@@ -4,7 +4,10 @@ use tracing_core::{callsite, span};
 use tracing_subscriber::registry::LookupSpan;
 
 use crate::{
-    layer::{_EtwTracingSubscriber, common, common::SpanStrings},
+    layer::{
+        _EtwTracingSubscriber,
+        common::{SpanStrings, registry},
+    },
     native::OutputMode,
     statics::*,
 };
@@ -48,14 +51,14 @@ where
         };
 
         let id = ctx.event_span(event).map(|span| span.id());
-        common::write_event(
+        registry::write_event(
             self.subscriber_id,
             self.provider.as_ref(),
             event,
             name,
             keyword,
             tag,
-            id.as_ref().map(common::EventSpan::Id),
+            id.as_ref(),
             self.get_otel_span_strings(id.as_ref()),
         )
     }
@@ -72,18 +75,13 @@ where
         } else {
             attrs.parent().cloned()
         };
-        common::create_registry_span_data_for_new_span(
-            self.subscriber_id,
-            attrs,
-            id,
-            parent.as_ref(),
-        )
+        registry::create_span_data_for_new_span(self.subscriber_id, attrs, id, parent.as_ref())
     }
 
     fn on_enter(&self, id: &span::Id, _ctx: tracing_subscriber::layer::Context<'_, S>) {
         // Spans don't have callsites to store keyword/tag metadata on,
         // so we must use the defaults.
-        common::enter_span(
+        registry::enter_span(
             self.subscriber_id,
             id,
             self.provider.as_ref(),
@@ -96,7 +94,7 @@ where
     fn on_exit(&self, id: &span::Id, _ctx: tracing_subscriber::layer::Context<'_, S>) {
         // Spans don't have callsites to store keyword/tag metadata on,
         // so we must use the defaults.
-        common::exit_span(
+        registry::exit_span(
             self.subscriber_id,
             id,
             self.provider.as_ref(),
@@ -107,7 +105,7 @@ where
     }
 
     fn on_close(&self, id: span::Id, _ctx: tracing_subscriber::layer::Context<'_, S>) {
-        let _ = common::release_span(self.subscriber_id, &id);
+        let _ = registry::release_span(self.subscriber_id, &id);
     }
 
     fn on_record(
@@ -116,7 +114,7 @@ where
         values: &span::Record<'_>,
         _ctx: tracing_subscriber::layer::Context<'_, S>,
     ) {
-        common::update_span_values(self.subscriber_id, id, values)
+        registry::update_span_values(self.subscriber_id, id, values)
     }
 }
 

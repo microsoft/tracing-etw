@@ -82,11 +82,18 @@ cache falls back to ID lookup, including during TLS initialization/teardown.
 Each shard can reuse up to four fully released entry allocations. Reuse requires
 exclusive allocation ownership, clears recorded fields before caching, and
 never recycles an entry still referenced by an entered handle or memory borrow.
-The registry-backed layer retains inline span payloads under shard locks;
-it does not pay for standalone entry allocations or per-entry locks. The two
+The registry-backed layer keeps each span payload in a shared allocation with
+its own lock. Enter, exit, and record clone the payload handle under a brief
+shard read lock, then encode and emit without holding the shard. Like
+standalone entries, each shard can reuse up to four uniquely owned released
+payload allocations. The two
 integrations have separate, statically selected storage and lifetime paths,
 without per-access storage-kind dispatch. Both APIs remain available together
 when `std` is enabled.
+
+Span strings (trace/span ID text) are written only by Common Schema output.
+Normal output skips OpenTelemetry context lookups and ID formatting, and no
+output mode looks up OpenTelemetry context for span start events.
 
 Standalone span IDs encode a 5-bit shard, 27-bit slot, and 32-bit generation.
 Indexed lookup checks both the generation and subscriber identity without

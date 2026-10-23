@@ -3,6 +3,9 @@
 use tracing::{Level, error_span, event, span};
 use tracing_etw::LayerBuilder;
 
+// Keep the public output-mode marker usable as a trait object.
+const _: Option<&dyn tracing_etw::OutputMode> = None;
+
 #[test]
 fn subscriber_span_test_1() {
     let layer = LayerBuilder::new("SpanTests").build_subscriber().unwrap();

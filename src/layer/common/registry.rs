@@ -28,8 +28,9 @@ impl<'a> SpanLookup<'a> {
         (self.hash >> 32) as usize & (SPAN_SHARD_COUNT - 1)
     }
 
-    fn get(self, spans: &RegistrySpanIndex) -> Option<&RegistrySpanData> {
+    fn get(self, spans: &RegistryShard) -> Option<&RegistrySpanData> {
         spans
+            .spans
             .raw_entry()
             .from_key_hashed_nocheck(self.hash, self.key)
             .map(|(_, data)| data)
@@ -37,23 +38,32 @@ impl<'a> SpanLookup<'a> {
 
     fn entry(
         self,
-        spans: &mut RegistrySpanIndex,
+        spans: &mut RegistryShard,
     ) -> RawEntryMut<'_, SpanKey, RegistrySpanData, ahash::RandomState> {
         spans
+            .spans
             .raw_entry_mut()
             .from_key_hashed_nocheck(self.hash, self.key)
     }
 
-    fn get_mut(self, spans: &mut RegistrySpanIndex) -> Option<&mut RegistrySpanData> {
+    fn get_mut(self, spans: &mut RegistryShard) -> Option<&mut RegistrySpanData> {
         match self.entry(spans) {
             RawEntryMut::Occupied(entry) => Some(entry.into_mut()),
             RawEntryMut::Vacant(_) => None,
         }
     }
+
+    // Clone the payload handle so callers can unlock the shard before emitting.
+    fn payload(self) -> Option<Arc<RwLock<SpanData>>> {
+        self.get(&shard(self).read())
+            .map(|span| Arc::clone(&span.payload))
+    }
 }
 
 struct RegistrySpanData {
-    data: SpanData,
+    // Shared so native writes run without holding the shard lock.
+    payload: Arc<RwLock<SpanData>>,
+    ids: SpanIds,
     references: usize,
     retained_parent: Option<tracing::span::Id>,
 }
@@ -69,13 +79,22 @@ impl RegistrySpanData {
 
 type RegistrySpanIndex = HashMap<SpanKey, RegistrySpanData, ahash::RandomState>;
 
-static SPAN_DATA: [SpanShard<RegistrySpanIndex>; SPAN_SHARD_COUNT] = [const {
+struct RegistryShard {
+    spans: RegistrySpanIndex,
+    // Released payload allocations, reused by later spans in this shard.
+    free: Vec<Arc<RwLock<SpanData>>>,
+}
+
+static SPAN_DATA: [SpanShard<RegistryShard>; SPAN_SHARD_COUNT] = [const {
     SpanShard {
-        spans: RwLock::new(HashMap::with_hasher(SPAN_HASHER)),
+        spans: RwLock::new(RegistryShard {
+            spans: HashMap::with_hasher(SPAN_HASHER),
+            free: Vec::new(),
+        }),
     }
 }; SPAN_SHARD_COUNT];
 
-fn shard(lookup: SpanLookup<'_>) -> &'static RwLock<RegistrySpanIndex> {
+fn shard(lookup: SpanLookup<'_>) -> &'static RwLock<RegistryShard> {
     &SPAN_DATA[lookup.shard_index()].spans
 }
 
@@ -100,8 +119,8 @@ pub(crate) fn create_span_data_for_new_span(
 }
 
 fn insert_span_data(
-    spans: &mut RegistrySpanIndex,
-    parents: Option<&mut RegistrySpanIndex>,
+    spans: &mut RegistryShard,
+    parents: Option<&mut RegistryShard>,
     lookup: SpanLookup<'_>,
     data: SpanData,
     parent: Option<SpanLookup<'_>>,
@@ -116,13 +135,25 @@ fn insert_span_data(
         data.retain();
         Some(parent.key.1.clone())
     });
+    let ids = data.ids;
+    let payload = match spans.free.pop() {
+        Some(mut cached) => {
+            // Cached payloads are unique and their fields were already taken.
+            *Arc::get_mut(&mut cached)
+                .and_then(RwLock::get_mut)
+                .expect("Cached span payload was still shared") = data;
+            cached
+        }
+        None => Arc::new(RwLock::new(data)),
+    };
     match lookup.entry(spans) {
         RawEntryMut::Vacant(entry) => {
             entry.insert_hashed_nocheck(
                 lookup.hash,
                 lookup.key.clone(),
                 RegistrySpanData {
-                    data,
+                    payload,
+                    ids,
                     references: 1,
                     retained_parent,
                 },
@@ -135,12 +166,39 @@ fn insert_span_data(
     }
 }
 
+// Keeps released allocations alive until the shard lock is dropped.
+struct ReleasedPayload {
+    _payload: Option<Arc<RwLock<SpanData>>>,
+    _fields: Box<[FieldValueIndex]>,
+}
+
+fn recycle_payload(
+    free: &mut Vec<Arc<RwLock<SpanData>>>,
+    mut payload: Arc<RwLock<SpanData>>,
+) -> ReleasedPayload {
+    if free.len() < CACHED_ENTRIES_PER_SHARD {
+        // A concurrent enter/exit may still hold a clone; only reuse unique payloads.
+        if let Some(data) = Arc::get_mut(&mut payload).and_then(RwLock::get_mut) {
+            let fields = core::mem::take(&mut data.fields);
+            free.push(payload);
+            return ReleasedPayload {
+                _payload: None,
+                _fields: fields,
+            };
+        }
+    }
+    ReleasedPayload {
+        _payload: Some(payload),
+        _fields: Box::default(),
+    }
+}
+
 pub(crate) fn release_span(subscriber_id: u64, id: &tracing::span::Id) -> bool {
     let mut key = (subscriber_id, id.clone());
     let mut closed = false;
     loop {
         let lookup = SpanLookup::new(&key);
-        let mut removed = {
+        let (parent, released) = {
             let mut spans = shard(lookup).write();
             let mut entry = match lookup.entry(&mut spans) {
                 RawEntryMut::Occupied(entry) => entry,
@@ -154,11 +212,12 @@ pub(crate) fn release_span(subscriber_id: u64, id: &tracing::span::Id) -> bool {
             if span.references != 0 {
                 return closed;
             }
-            entry.remove()
+            let removed = entry.remove();
+            let released = recycle_payload(&mut spans.free, removed.payload);
+            (removed.retained_parent, released)
         };
         closed = true;
-        let parent = removed.retained_parent.take();
-        drop(removed);
+        drop(released);
         // The child's retained reference keeps its parent alive between locks.
         match parent {
             Some(parent) => key.1 = parent,
@@ -177,14 +236,12 @@ pub(crate) fn enter_span<OutMode: OutputMode>(
 ) {
     let timestamp = Timestamp::now();
     let key = (subscriber_id, id.clone());
-    let lookup = SpanLookup::new(&key);
-    let mut spans = shard(lookup).write();
-    let Some(span) = lookup.get_mut(&mut spans) else {
+    let Some(payload) = SpanLookup::new(&key).payload() else {
         debug_assert!(false, "Enter of unrecognized span");
         return;
     };
     write_span_start_data(
-        &mut span.data,
+        &mut payload.write(),
         timestamp,
         writer,
         keyword,
@@ -203,14 +260,12 @@ pub(crate) fn exit_span<OutMode: OutputMode>(
 ) {
     let timestamp = Timestamp::now();
     let key = (subscriber_id, id.clone());
-    let lookup = SpanLookup::new(&key);
-    let spans = shard(lookup).read();
-    let Some(span) = lookup.get(&spans) else {
+    let Some(payload) = SpanLookup::new(&key).payload() else {
         debug_assert!(false, "Exit of unrecognized span");
         return;
     };
     write_span_stop(
-        &span.data,
+        &payload.read(),
         timestamp,
         writer,
         keyword,
@@ -226,13 +281,11 @@ pub(crate) fn update_span_values(
 ) {
     let mut updates = SpanUpdates::new(values);
     let key = (subscriber_id, id.clone());
-    let lookup = SpanLookup::new(&key);
-    let mut spans = shard(lookup).write();
-    let Some(span) = lookup.get_mut(&mut spans) else {
+    let Some(payload) = SpanLookup::new(&key).payload() else {
         debug_assert!(false, "Event on unrecognized span");
         return;
     };
-    updates.apply(&mut span.data);
+    updates.apply(&mut payload.write());
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -256,7 +309,7 @@ pub(crate) fn write_event<OutMode: OutputMode>(
             let ids = span.and_then(|id| {
                 let key = (subscriber_id, id.clone());
                 let lookup = SpanLookup::new(&key);
-                lookup.get(&shard(lookup).read()).map(|span| span.data.ids)
+                lookup.get(&shard(lookup).read()).map(|span| span.ids)
             });
             (span.map_or(0, tracing::span::Id::into_u64), ids)
         },
@@ -285,7 +338,7 @@ mod tests {
 
     fn contains(subscriber_id: u64, id: &Id) -> bool {
         let key = (subscriber_id, id.clone());
-        shard(SpanLookup::new(&key)).read().contains_key(&key)
+        shard(SpanLookup::new(&key)).read().spans.contains_key(&key)
     }
 
     #[test]
@@ -312,14 +365,13 @@ mod tests {
         }
         assert!(buckets.count_ones() >= 6);
         for id in ids {
-            let key = (subscriber_id, id.clone());
-            assert!(shard(SpanLookup::new(&key)).read().contains_key(&key));
+            assert!(contains(subscriber_id, &id));
             assert!(release_span(subscriber_id, &id));
         }
     }
 
     #[test]
-    fn registry_entries_stay_inline_and_retain_each_parent_once() {
+    fn registry_entries_retain_each_parent_once() {
         let subscriber = new_subscriber();
         let parent = Id::from_u64(1);
         let child = Id::from_u64(2);
@@ -341,7 +393,7 @@ mod tests {
         for (id, expected) in [(&parent, 2), (&child, 2)] {
             let key = (subscriber.subscriber_id, id.clone());
             assert_eq!(
-                shard(SpanLookup::new(&key)).read()[&key].references,
+                shard(SpanLookup::new(&key)).read().spans[&key].references,
                 expected
             );
         }
@@ -367,8 +419,7 @@ mod tests {
             let child_id = child.id().unwrap();
             let key = (subscriber_id, child_id.clone());
             assert_eq!(
-                shard(SpanLookup::new(&key)).read()[&key]
-                    .data
+                shard(SpanLookup::new(&key)).read().spans[&key]
                     .ids
                     .parent_span_id,
                 Some(parent_id.into_non_zero_u64()),
@@ -430,7 +481,7 @@ mod tests {
         );
         let key = (subscriber_id, child.clone());
         assert!(matches!(
-            shard(SpanLookup::new(&key)).read()[&key].data.fields[0].value,
+            SpanLookup::new(&key).payload().unwrap().read().fields[0].value,
             ValueTypes::v_u64(11)
         ));
         assert!(matches!(
@@ -483,6 +534,27 @@ mod tests {
         assert_eq!(subscriber.current_span().id(), Some(&child));
         subscriber.exit(&child);
         assert!(!standalone::tests::contains(subscriber_id, &child));
+    }
+
+    #[test]
+    fn registry_emission_runs_without_the_shard_lock() {
+        let _probe = LOCK_PROBES.lock().unwrap();
+        let subscriber = new_subscriber();
+        let id = Id::from_u64(3);
+        let values = META.fields().value_set(&[]);
+        create_span_data_for_new_span(
+            subscriber.subscriber_id,
+            &Attributes::new_root(&META, &values),
+            &id,
+            None,
+        );
+        let writer = standalone::tests::UnlockedShardWriter {
+            key: (subscriber.subscriber_id, id.clone()),
+            lock: |key| drop(shard(SpanLookup::new(key)).write()),
+        };
+        enter_span(subscriber.subscriber_id, &id, Pin::new(&writer), 1, 0, None);
+        exit_span(subscriber.subscriber_id, &id, Pin::new(&writer), 1, 0, None);
+        assert!(release_span(subscriber.subscriber_id, &id));
     }
 
     #[test]

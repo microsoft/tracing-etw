@@ -417,6 +417,7 @@ impl<Mode: OutputMode> super::EventWriter<CommonSchemaOutput> for Provider<Mode>
         };
 
         context.with_builder(|mut eb| {
+            let span_strings = data.span_strings();
             eb.reset(data.name(), event_tag as u16);
             eb.opcode(Opcode::Info);
 
@@ -432,18 +433,8 @@ impl<Mode: OutputMode> super::EventWriter<CommonSchemaOutput> for Provider<Mode>
 
                 eb.add_struct("ext_dt", 2, 0);
                 {
-                    eb.add_str(
-                        "traceId",
-                        data.span_strings().trace_id,
-                        FieldFormat::Default,
-                        0,
-                    );
-                    eb.add_str(
-                        "spanId",
-                        data.span_strings().span_id,
-                        FieldFormat::Default,
-                        0,
-                    );
+                    eb.add_str("traceId", span_strings.trace_id, FieldFormat::Default, 0);
+                    eb.add_str("spanId", span_strings.span_id, FieldFormat::Default, 0);
                 }
             }
 
@@ -458,7 +449,7 @@ impl<Mode: OutputMode> super::EventWriter<CommonSchemaOutput> for Provider<Mode>
             //     }
             // }
 
-            let partb_field_count = 3 + if data.span_strings().parent_span_id().is_some() {
+            let partb_field_count = 3 + if span_strings.parent_span_id().is_some() {
                 1
             } else {
                 0
@@ -468,7 +459,7 @@ impl<Mode: OutputMode> super::EventWriter<CommonSchemaOutput> for Provider<Mode>
             {
                 eb.add_str("_typeName", "Span", FieldFormat::Default, 0);
 
-                if let Some(pid) = data.span_strings().parent_span_id() {
+                if let Some(pid) = span_strings.parent_span_id() {
                     eb.add_str("parentId", pid, FieldFormat::Default, 0);
                 }
 

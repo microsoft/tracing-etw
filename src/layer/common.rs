@@ -103,6 +103,7 @@ pub(crate) enum EventSpan<'a> {
 }
 
 #[doc(hidden)]
+#[derive(Clone, Copy)]
 pub struct SpanStrings {
     pub(crate) trace_id: [u8; 32], // UTF-8 hex bytes, only non-zero if the otel feature is enabled and the span has a valid trace ID
     pub(crate) span_id: [u8; 16], // UTF-8 hex bytes, either the otel span ID if the otel feature is enabled, or the local span ID
@@ -219,7 +220,7 @@ fn release_span_reference(entry: &SpanEntry) -> bool {
 #[doc(hidden)]
 pub struct SpanRef<'a> {
     data: &'a SpanData,
-    span_strings: SpanStrings,
+    otel_span_strings: Option<OtelSpanStrings>,
 }
 
 impl SpanRef<'_> {
@@ -255,8 +256,9 @@ impl SpanRef<'_> {
         self.data.fields.len()
     }
 
-    pub(crate) fn span_strings(&self) -> &SpanStrings {
-        &self.span_strings
+    // Built on demand: only some output modes write these strings.
+    pub(crate) fn span_strings(&self) -> SpanStrings {
+        SpanStrings::build(self.data.ids, self.otel_span_strings)
     }
 }
 
@@ -587,17 +589,22 @@ pub(crate) fn enter_span_retained<OutMode: OutputMode>(
     let timestamp = Timestamp::now();
     let key = (subscriber_id, id.clone());
     let lookup = SpanLookup::new(&key);
-    let spans = lookup.shard().read();
-    let entry = lookup
-        .get(&spans)
-        .expect("Clone or enter of an unrecognized span");
-    retain_span_entry(entry);
-    // The map guard keeps this borrow stable while the retained handle moves
-    // into pre-reserved TLS. The callback only pushes and ends its TLS borrow.
+    let entry = {
+        let spans = lookup.shard().read();
+        let entry = lookup
+            .get(&spans)
+            .expect("Clone or enter of an unrecognized span");
+        // Retain under the map guard so the span cannot close concurrently.
+        retain_span_entry(entry);
+        Arc::clone(entry)
+    };
+    // The shard is unlocked before emission so native writes do not block
+    // other spans in the same shard. The callback only pushes into
+    // pre-reserved TLS and ends its borrow.
     on_enter(SpanHandle {
-        entry: Arc::clone(entry),
+        entry: Arc::clone(&entry),
     });
-    write_span_start(entry, timestamp, writer, keyword, tag, otel_span_strings);
+    write_span_start(&entry, timestamp, writer, keyword, tag, otel_span_strings);
 }
 
 pub(crate) fn enter_span_cached<OutMode: OutputMode>(
@@ -648,7 +655,7 @@ fn write_span_start_data<OutMode: OutputMode>(
     writer.span_start(
         SpanRef {
             data,
-            span_strings: SpanStrings::build(data.ids, otel_span_strings),
+            otel_span_strings,
         },
         keyword,
         tag,
@@ -686,7 +693,7 @@ fn write_span_stop<OutMode: OutputMode>(
         (data.start_time.into(), stop_timestamp.into()),
         SpanRef {
             data,
-            span_strings: SpanStrings::build(data.ids, otel_span_strings),
+            otel_span_strings,
         },
         keyword,
         tag,
@@ -752,9 +759,13 @@ fn write_event_with<OutMode: OutputMode>(
     let parent_span = ids
         .and_then(|ids| ids.parent_span_id)
         .map_or(0, |id| id.get());
-    let span_strings = match ids {
-        Some(ids) => Some(SpanStrings::build(ids, otel_span_strings)),
-        None => otel_span_strings,
+    let span_strings = if crate::native::uses_span_strings::<OutMode>() {
+        match ids {
+            Some(ids) => Some(SpanStrings::build(ids, otel_span_strings)),
+            None => otel_span_strings,
+        }
+    } else {
+        None
     };
 
     writer.write_record(
@@ -773,7 +784,11 @@ fn write_event_with<OutMode: OutputMode>(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{LayerBuilder, layer::_EtwTracingSubscriber, native::NormalOutput};
+    use crate::{
+        LayerBuilder,
+        layer::_EtwTracingSubscriber,
+        native::{CommonSchemaOutput, NormalOutput},
+    };
     use std::{sync::mpsc, time::Duration};
     use tracing::{
         Metadata, Subscriber,
@@ -1473,7 +1488,8 @@ mod tests {
         pub(super) std::sync::Mutex<Option<(u64, u64, Option<SpanStrings>)>>,
     );
 
-    impl EventWriter<NormalOutput> for RecordingWriter {
+    // Common Schema is the output mode that receives span strings.
+    impl EventWriter<CommonSchemaOutput> for RecordingWriter {
         fn span_start(self: Pin<&Self>, _: SpanRef<'_>, _: u64, _: u32) {}
 
         fn span_stop(
@@ -1502,6 +1518,140 @@ mod tests {
         ) {
             *self.0.lock().unwrap() = Some((current_span, parent_span, span_strings));
         }
+    }
+
+    // Asserts during span emission that another thread can lock the span's shard.
+    pub(super) struct UnlockedShardWriter {
+        pub(super) key: SpanKey,
+        pub(super) lock: fn(&SpanKey),
+    }
+
+    impl UnlockedShardWriter {
+        fn assert_unlocked(&self) {
+            let (key, lock) = (self.key.clone(), self.lock);
+            let (done, completed) = mpsc::channel();
+            // Detached, so a failed probe can finish after this writer unwinds.
+            std::thread::spawn(move || {
+                lock(&key);
+                let _ = done.send(());
+            });
+            completed
+                .recv_timeout(Duration::from_secs(5))
+                .expect("Native writes must not hold the span's shard lock");
+        }
+    }
+
+    impl EventWriter<NormalOutput> for UnlockedShardWriter {
+        fn span_start(self: Pin<&Self>, _: SpanRef<'_>, _: u64, _: u32) {
+            self.assert_unlocked();
+        }
+
+        fn span_stop(
+            self: Pin<&Self>,
+            _: (
+                crate::native::time::CivilTime,
+                crate::native::time::CivilTime,
+            ),
+            _: SpanRef<'_>,
+            _: u64,
+            _: u32,
+        ) {
+            self.assert_unlocked();
+        }
+
+        fn write_record(
+            self: Pin<&Self>,
+            _: crate::native::time::CivilTime,
+            _: u64,
+            _: u64,
+            _: &str,
+            _: &tracing::Level,
+            _: u64,
+            _: u32,
+            _: &tracing::Event<'_>,
+            _: Option<SpanStrings>,
+        ) {
+        }
+    }
+
+    #[test]
+    fn retained_entry_emission_runs_without_the_shard_lock() {
+        let _probe = LOCK_PROBES.lock().unwrap();
+        let subscriber = new_subscriber();
+        let id = new_span(&subscriber, Parent::Root);
+        let writer = UnlockedShardWriter {
+            key: (subscriber.subscriber_id, id.clone()),
+            lock: |key| drop(span_shard(key).write()),
+        };
+        let mut retained = None;
+        enter_span_retained(
+            subscriber.subscriber_id,
+            &id,
+            Pin::new(&writer),
+            1,
+            0,
+            None,
+            |handle| retained = Some(handle),
+        );
+        exit_span_cached(retained.as_ref().unwrap(), Pin::new(&writer), 1, 0, None);
+        drop(retained);
+        assert!(subscriber.try_close(id));
+    }
+
+    #[test]
+    fn normal_output_events_skip_span_strings() {
+        struct NormalRecorder(std::sync::Mutex<Option<Option<SpanStrings>>>);
+        impl EventWriter<NormalOutput> for NormalRecorder {
+            fn span_start(self: Pin<&Self>, _: SpanRef<'_>, _: u64, _: u32) {}
+            fn span_stop(
+                self: Pin<&Self>,
+                _: (
+                    crate::native::time::CivilTime,
+                    crate::native::time::CivilTime,
+                ),
+                _: SpanRef<'_>,
+                _: u64,
+                _: u32,
+            ) {
+            }
+            fn write_record(
+                self: Pin<&Self>,
+                _: crate::native::time::CivilTime,
+                _: u64,
+                _: u64,
+                _: &str,
+                _: &tracing::Level,
+                _: u64,
+                _: u32,
+                _: &tracing::Event<'_>,
+                span_strings: Option<SpanStrings>,
+            ) {
+                *self.0.lock().unwrap() = Some(span_strings);
+            }
+        }
+        let subscriber = new_subscriber();
+        let id = new_span(&subscriber, Parent::Root);
+        let writer = NormalRecorder(Default::default());
+        let values = META.fields().value_set(&[]);
+        let otel = SpanStrings {
+            trace_id: [b'a'; 32],
+            span_id: [b'b'; 16],
+            parent_span_id: None,
+        };
+        for span in [Some(EventSpan::Id(&id)), None] {
+            write_event(
+                subscriber.subscriber_id,
+                Pin::new(&writer),
+                &tracing::Event::new(&META, &values),
+                "event",
+                1,
+                0,
+                span,
+                Some(otel),
+            );
+            assert!(writer.0.lock().unwrap().take().unwrap().is_none());
+        }
+        assert!(subscriber.try_close(id));
     }
 
     #[test]

@@ -399,6 +399,7 @@ impl<Mode: OutputMode> super::EventWriter<CommonSchemaOutput> for Provider<Mode>
         context: &super::EventContext,
     ) {
         context.with_builder(|mut eb| {
+            let span_strings = data.span_strings();
             eb.reset(
                 data.name(),
                 Self::map_level(&data.level()),
@@ -419,8 +420,8 @@ impl<Mode: OutputMode> super::EventWriter<CommonSchemaOutput> for Provider<Mode>
 
                 eb.add_struct("ext_dt", 2, 0);
                 {
-                    eb.add_str8("traceId", data.span_strings().trace_id, OutType::Utf8, 0);
-                    eb.add_str8("spanId", data.span_strings().span_id, OutType::Utf8, 0);
+                    eb.add_str8("traceId", span_strings.trace_id, OutType::Utf8, 0);
+                    eb.add_str8("spanId", span_strings.span_id, OutType::Utf8, 0);
                 }
             }
 
@@ -435,7 +436,7 @@ impl<Mode: OutputMode> super::EventWriter<CommonSchemaOutput> for Provider<Mode>
             //     }
             // }
 
-            let partb_field_count = 3 + if data.span_strings().parent_span_id().is_some() {
+            let partb_field_count = 3 + if span_strings.parent_span_id().is_some() {
                 1
             } else {
                 0
@@ -445,7 +446,7 @@ impl<Mode: OutputMode> super::EventWriter<CommonSchemaOutput> for Provider<Mode>
             {
                 eb.add_str8("_typeName", "Span", OutType::Utf8, 0);
 
-                if let Some(pid) = data.span_strings().parent_span_id() {
+                if let Some(pid) = span_strings.parent_span_id() {
                     eb.add_str8("parentId", pid, OutType::Utf8, 0);
                 }
 

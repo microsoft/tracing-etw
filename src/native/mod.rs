@@ -282,23 +282,46 @@ impl GuidWrapper {
 #[doc(hidden)]
 mod private {
     #[doc(hidden)]
-    pub trait Sealed {}
+    pub trait Sealed {
+        // Whether writers consume SpanStrings (trace/span ID text) for span stops and events.
+        fn uses_span_strings() -> bool
+        where
+            Self: Sized;
+    }
     pub struct SealedStruct;
+}
+
+/// Whether `Mode` writes span strings, so callers can skip OpenTelemetry
+/// lookups and ID formatting when they would be discarded.
+#[inline(always)]
+pub(crate) fn uses_span_strings<Mode: OutputMode>() -> bool {
+    <Mode as private::Sealed>::uses_span_strings()
 }
 
 /// The format of events emitted by an [`EtwLayer`](crate::EtwLayer).
 ///
 /// This trait is sealed and cannot be implemented outside this crate.
+/// It is dyn-compatible.
 pub trait OutputMode: private::Sealed {}
 
 /// An [`OutputMode`] representing the standard ETW or user_events format.
 pub struct NormalOutput(private::SealedStruct);
-impl private::Sealed for NormalOutput {}
+impl private::Sealed for NormalOutput {
+    #[inline]
+    fn uses_span_strings() -> bool {
+        false
+    }
+}
 impl OutputMode for NormalOutput {}
 
 /// An [`OutputMode`] representing the Common Schema 4.0 format.
 pub struct CommonSchemaOutput(private::SealedStruct);
-impl private::Sealed for CommonSchemaOutput {}
+impl private::Sealed for CommonSchemaOutput {
+    #[inline]
+    fn uses_span_strings() -> bool {
+        true
+    }
+}
 impl OutputMode for CommonSchemaOutput {}
 
 #[doc(hidden)]

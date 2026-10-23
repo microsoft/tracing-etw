@@ -15,7 +15,7 @@ doctest = false
 
 [features]
 default = ["std", "opentelemetry"]
-std = ["tracing-subscriber/registry", "tracing/std"]
+std = ["tracing-subscriber/registry", "tracing/std", "dep:hashbrown"]
 # Enable OpenTelemetry trace context extraction. When enabled, span_id and trace_id
 # will be extracted using tracing-opentelemetry's context API when available.
 opentelemetry = ["dep:tracing-opentelemetry", "dep:opentelemetry", "std", "tracing-subscriber/registry"]
@@ -27,7 +27,7 @@ tracing-subscriber = {version="0.3", default-features = false, optional = true}
 paste = "1"
 thiserror = {version="2", default-features = false}
 ahash = {version = "0.8", default-features = false}
-hashbrown = "0.17"
+hashbrown = {version = "0.17", optional = true}
 
 # Optional OpenTelemetry dependencies
 tracing-opentelemetry = {version = "0.33", optional = true}

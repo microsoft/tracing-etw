@@ -16,6 +16,11 @@ impl<OutMode: OutputMode, S> _EtwTracingSubscriber<OutMode, S> {
     fn get_otel_span_strings(&self, id: Option<&span::Id>) -> Option<SpanStrings> {
         #[cfg(feature = "opentelemetry")]
         {
+            // Skip the dispatch upgrade and context lookup when the output
+            // mode would discard the result.
+            if !crate::native::uses_span_strings::<OutMode>() {
+                return None;
+            }
             let dispatch = self.dispatch.get()?.upgrade()?;
             crate::otel::get_otel_span_data(id?, &dispatch)
         }
@@ -81,13 +86,15 @@ where
     fn on_enter(&self, id: &span::Id, _ctx: tracing_subscriber::layer::Context<'_, S>) {
         // Spans don't have callsites to store keyword/tag metadata on,
         // so we must use the defaults.
+        // No output mode writes span strings in span start events, so skip
+        // the OpenTelemetry lookup here.
         registry::enter_span(
             self.subscriber_id,
             id,
             self.provider.as_ref(),
             self.default_keyword,
             0,
-            self.get_otel_span_strings(Some(id)),
+            None,
         )
     }
 
@@ -129,16 +136,18 @@ mod tests {
     use tracing_subscriber::prelude::*;
 
     use super::*;
-    use crate::{LayerBuilder, NormalOutput};
+    use crate::{CommonSchemaOutput, LayerBuilder, NormalOutput};
 
-    fn exercise_context<S: 'static, T: Subscriber + Send + Sync>(
-        layer: _EtwTracingSubscriber<NormalOutput, S>,
-        build: impl FnOnce(_EtwTracingSubscriber<NormalOutput, S>) -> T,
+    fn exercise_context<Mode: OutputMode + 'static, S: 'static, T: Subscriber + Send + Sync>(
+        layer: _EtwTracingSubscriber<Mode, S>,
+        build: impl FnOnce(_EtwTracingSubscriber<Mode, S>) -> T,
         valid_parent: bool,
-    ) {
+    ) where
+        crate::native::Provider<Mode>: crate::native::EventWriter<Mode>,
+    {
         let dispatch = Dispatch::new(build(layer));
         let layer = dispatch
-            .downcast_ref::<_EtwTracingSubscriber<NormalOutput, S>>()
+            .downcast_ref::<_EtwTracingSubscriber<Mode, S>>()
             .unwrap();
         let span = tracing::dispatcher::with_default(&dispatch, || {
             tracing::info_span!("OtelContext", value = 1)
@@ -160,7 +169,7 @@ mod tests {
         // subscriber, not the thread's current default dispatch.
         tracing::dispatcher::with_default(&Dispatch::none(), || {
             let strings = layer.get_otel_span_strings(Some(&id));
-            if valid_parent {
+            if valid_parent && crate::native::uses_span_strings::<Mode>() {
                 let strings = strings.expect("A valid OpenTelemetry context is available");
                 assert_eq!(&strings.trace_id, b"00000000000000000000000000001234");
                 assert_eq!(&strings.span_id, b"0000000000005678");
@@ -193,7 +202,9 @@ mod tests {
     #[test]
     fn extracts_context_in_either_layer_order() {
         exercise_context(
-            LayerBuilder::new("OtelInner").__build_for_test().unwrap(),
+            LayerBuilder::new_common_schema_events("OtelInner")
+                .__build_for_test()
+                .unwrap(),
             |layer| {
                 tracing_subscriber::registry()
                     .with(layer)
@@ -202,7 +213,9 @@ mod tests {
             true,
         );
         exercise_context(
-            LayerBuilder::new("OtelOuter").__build_for_test().unwrap(),
+            LayerBuilder::new_common_schema_events("OtelOuter")
+                .__build_for_test()
+                .unwrap(),
             |layer| {
                 tracing_subscriber::registry()
                     .with(tracing_opentelemetry::layer())
@@ -213,9 +226,24 @@ mod tests {
     }
 
     #[test]
+    fn normal_output_skips_unused_context_lookups() {
+        exercise_context::<NormalOutput, _, _>(
+            LayerBuilder::new("OtelNormal").__build_for_test().unwrap(),
+            |layer| {
+                tracing_subscriber::registry()
+                    .with(layer)
+                    .with(tracing_opentelemetry::layer())
+            },
+            true,
+        );
+    }
+
+    #[test]
     fn invalid_context_preserves_local_span_fallback() {
-        exercise_context(
-            LayerBuilder::new("OtelInvalid").__build_for_test().unwrap(),
+        exercise_context::<CommonSchemaOutput, _, _>(
+            LayerBuilder::new_common_schema_events("OtelInvalid")
+                .__build_for_test()
+                .unwrap(),
             |layer| {
                 tracing_subscriber::registry()
                     .with(layer)
@@ -227,8 +255,10 @@ mod tests {
 
     #[test]
     fn missing_otel_layer_preserves_local_span_fallback() {
-        exercise_context(
-            LayerBuilder::new("OtelMissing").__build_for_test().unwrap(),
+        exercise_context::<CommonSchemaOutput, _, _>(
+            LayerBuilder::new_common_schema_events("OtelMissing")
+                .__build_for_test()
+                .unwrap(),
             |layer| tracing_subscriber::registry().with(layer),
             false,
         );

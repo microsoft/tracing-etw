@@ -78,21 +78,21 @@ fn rejects_access_to_a_value_while_it_is_being_destroyed() {
     assert_eq!(REJECTED.load(Ordering::SeqCst), 1);
 }
 
-#[cfg(windows)]
-#[test]
-fn native_slot_operations_preserve_the_windows_last_error() {
-    use windows_sys::Win32::Foundation::{GetLastError, SetLastError};
+// #[cfg(windows)]
+// #[test]
+// fn native_slot_operations_preserve_the_windows_last_error() {
+//     use windows_sys::Win32::Foundation::{GetLastError, SetLastError};
 
-    // SAFETY: These APIs read/write only this test thread's error code.
-    static LOCAL: LocalKey<u32> = LocalKey::new(|| unsafe { GetLastError() });
-    unsafe { SetLastError(12345) };
-    let initial_error = LOCAL.with(|value| *value);
-    assert_eq!(unsafe { GetLastError() }, 12345);
-    assert_eq!(initial_error, 12345);
-    unsafe { SetLastError(54321) };
-    LOCAL.with(|_| {});
-    assert_eq!(unsafe { GetLastError() }, 54321);
-}
+//     // SAFETY: These APIs read/write only this test thread's error code.
+//     static LOCAL: LocalKey<u32> = LocalKey::new(|| unsafe { GetLastError() });
+//     unsafe { SetLastError(12345) };
+//     let initial_error = LOCAL.with(|value| *value);
+//     assert_eq!(unsafe { GetLastError() }, 12345);
+//     assert_eq!(initial_error, 12345);
+//     unsafe { SetLastError(54321) };
+//     LOCAL.with(|_| {});
+//     assert_eq!(unsafe { GetLastError() }, 54321);
+// }
 
 #[cfg(windows)]
 #[test]

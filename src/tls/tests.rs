@@ -96,7 +96,7 @@ fn rejects_access_to_a_value_while_it_is_being_destroyed() {
 
 #[cfg(windows)]
 #[test]
-fn isolates_fibers_and_preserves_the_callers_value_when_deleting_another_fiber() {
+fn fibers_share_the_thread_value_and_it_is_destroyed_at_thread_exit() {
     use core::{ffi::c_void, ptr};
     use windows_sys::Win32::System::Threading::{
         ConvertFiberToThread, ConvertThreadToFiber, CreateFiber, DeleteFiber, SwitchToFiber,
@@ -113,15 +113,13 @@ fn isolates_fibers_and_preserves_the_callers_value_when_deleting_another_fiber()
 
     struct Context {
         parent: *mut c_void,
-        initial: usize,
-        updated: usize,
+        observed: usize,
     }
     unsafe extern "system" fn run(data: *mut c_void) {
         // SAFETY: The context lives on the parent stack until this fiber is deleted.
         let context = unsafe { &mut *data.cast::<Context>() };
-        context.initial = LOCAL.with_borrow(|value| value.0);
+        context.observed = LOCAL.with_borrow(|value| value.0);
         LOCAL.with_borrow_mut(|value| value.0 = 7);
-        context.updated = LOCAL.with_borrow(|value| value.0);
         // SAFETY: The parent fiber is suspended in SwitchToFiber and remains live.
         unsafe { SwitchToFiber(context.parent) };
     }
@@ -139,26 +137,62 @@ fn isolates_fibers_and_preserves_the_callers_value_when_deleting_another_fiber()
         }
     }
 
-    // SAFETY: This test owns its thread and has not converted it to a fiber.
-    let parent = unsafe { ConvertThreadToFiber(ptr::null()) };
-    assert!(!parent.is_null());
-    let mut cleanup = Cleanup(ptr::null_mut());
-    let mut context = Context {
-        parent,
-        initial: usize::MAX,
-        updated: usize::MAX,
-    };
-    LOCAL.with_borrow_mut(|value| value.0 = 42);
-    // SAFETY: Context stays live until the suspended child has been deleted.
-    cleanup.0 = unsafe { CreateFiber(0, Some(run), ptr::from_mut(&mut context).cast()) };
-    assert!(!cleanup.0.is_null());
-    // SAFETY: The child was just created with a valid entry point and context.
-    unsafe { SwitchToFiber(cleanup.0) };
-    assert_eq!((context.initial, context.updated), (0, 7));
-    LOCAL.with_borrow(|value| assert_eq!(value.0, 42));
-    // SAFETY: The child has switched back to this fiber and is suspended.
-    unsafe { DeleteFiber(cleanup.0) };
-    cleanup.0 = ptr::null_mut();
+    thread::spawn(|| {
+        // SAFETY: This new thread has not been converted to a fiber.
+        let parent = unsafe { ConvertThreadToFiber(ptr::null()) };
+        assert!(!parent.is_null());
+        let mut cleanup = Cleanup(ptr::null_mut());
+        let mut context = Context {
+            parent,
+            observed: usize::MAX,
+        };
+        LOCAL.with_borrow_mut(|value| value.0 = 42);
+        // SAFETY: Context stays live until the suspended child has been deleted.
+        cleanup.0 = unsafe { CreateFiber(0, Some(run), ptr::from_mut(&mut context).cast()) };
+        assert!(!cleanup.0.is_null());
+        // SAFETY: The child was just created with a valid entry point and context.
+        unsafe { SwitchToFiber(cleanup.0) };
+        assert_eq!(context.observed, 42);
+        LOCAL.with_borrow(|value| assert_eq!(value.0, 7));
+        // Deleting a fiber or converting back to a thread does not destroy
+        // the thread's value.
+        drop(cleanup);
+        assert_eq!(DROPS.load(Ordering::SeqCst), 0);
+        LOCAL.with_borrow(|value| assert_eq!(value.0, 7));
+    })
+    .join()
+    .unwrap();
     assert_eq!(DROPS.load(Ordering::SeqCst), 1);
-    LOCAL.with_borrow(|value| assert_eq!(value.0, 42));
+}
+
+#[test]
+fn destructors_can_reinitialize_other_keys_during_thread_exit() {
+    static INITS: AtomicUsize = AtomicUsize::new(0);
+    static DROPS: AtomicUsize = AtomicUsize::new(0);
+    struct Late;
+    impl Drop for Late {
+        fn drop(&mut self) {
+            DROPS.fetch_add(1, Ordering::SeqCst);
+        }
+    }
+    struct Early;
+    impl Drop for Early {
+        fn drop(&mut self) {
+            // May run before or after LATE's first destruction pass.
+            LATE.with(|_| {});
+        }
+    }
+    static LATE: LocalKey<Late> = LocalKey::new(|| {
+        INITS.fetch_add(1, Ordering::SeqCst);
+        Late
+    });
+    static EARLY: LocalKey<Early> = LocalKey::new(|| Early);
+    thread::spawn(|| {
+        LATE.with(|_| {});
+        EARLY.with(|_| {});
+    })
+    .join()
+    .unwrap();
+    // A value reinitialized by another destructor is destroyed rather than leaked.
+    assert_eq!(DROPS.load(Ordering::SeqCst), INITS.load(Ordering::SeqCst));
 }

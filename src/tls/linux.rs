@@ -24,11 +24,6 @@ impl Key {
         let result = unsafe { libc::pthread_setspecific(self.0, value) };
         assert_eq!(result, 0, "pthread_setspecific failed: {result}");
     }
-
-    pub(super) fn is_current(&self, _: *mut c_void) -> bool {
-        // pthread clears this thread's slot before calling its destructor.
-        true
-    }
 }
 
 unsafe extern "C" fn destroy<T: 'static>(value: *mut c_void) {

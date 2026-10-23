@@ -1,6 +1,4 @@
 use core::fmt::Write;
-extern crate alloc;
-use alloc::string::{String, ToString};
 
 use tracing::field;
 
@@ -10,6 +8,9 @@ use crate::values::*;
 #[allow(dead_code)]
 pub(crate) trait AddFieldAndValue {
     fn add_field_value(&mut self, fv: &crate::values::FieldAndValue);
+
+    // Adds a borrowed string without first converting it to an owned value.
+    fn add_str_value(&mut self, field_name: &'static str, value: &str);
 }
 
 // We need a wrapper because we cannot implement an external trait (field::Visit) on an external type (EventBuilder)
@@ -27,16 +28,14 @@ impl<T: AddFieldAndValue> From<T> for EventBuilderVisitorWrapper<T> {
 
 impl<T: AddFieldAndValue> field::Visit for EventBuilderVisitorWrapper<T> {
     fn record_debug(&mut self, field: &field::Field, value: &dyn core::fmt::Debug) {
-        let mut string = String::with_capacity(10);
+        // Event fields are copied into the builder immediately, so format on
+        // the stack instead of allocating an owned string.
+        let mut string = FormatBuffer::<FORMAT_INLINE_CAPACITY>::new();
         if write!(string, "{:?}", value).is_err() {
-            // TODO: Needs to do a heap allocation
             return;
         }
 
-        self.wrapped.add_field_value(&FieldAndValue {
-            field_name: field.name(),
-            value: &ValueTypes::from(string),
-        })
+        self.wrapped.add_str_value(field.name(), string.as_str())
     }
 
     fn record_f64(&mut self, field: &field::Field, value: f64) {
@@ -82,10 +81,7 @@ impl<T: AddFieldAndValue> field::Visit for EventBuilderVisitorWrapper<T> {
     }
 
     fn record_str(&mut self, field: &field::Field, value: &str) {
-        self.wrapped.add_field_value(&FieldAndValue {
-            field_name: field.name(),
-            value: &ValueTypes::from(value.to_string()),
-        })
+        self.wrapped.add_str_value(field.name(), value)
     }
 
     // record_error uses tracing-core's Display-string default; see SpanValueVisitor.

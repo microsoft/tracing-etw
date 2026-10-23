@@ -1,10 +1,6 @@
 use core::{marker::PhantomData, ops::DerefMut, pin::Pin};
 extern crate alloc;
-use alloc::{
-    borrow::Cow,
-    string::{String, ToString},
-    sync::Arc,
-};
+use alloc::{borrow::Cow, string::ToString, sync::Arc};
 
 use crate::{
     error::EtwError,
@@ -59,12 +55,16 @@ impl AddFieldAndValue for &'_ mut eventheader_dynamic::EventBuilder {
                 self.add_value(fv.field_name, *b, FieldFormat::Boolean, 0);
             }
             ValueTypes::v_str(s) => {
-                self.add_str(fv.field_name, s.as_ref(), FieldFormat::Default, 0);
+                self.add_str_value(fv.field_name, s.as_ref());
             }
             ValueTypes::v_char(c) => {
                 self.add_value(fv.field_name, *c, FieldFormat::StringUtf, 0);
             }
         }
+    }
+
+    fn add_str_value(&mut self, field_name: &'static str, value: &str) {
+        self.add_str(field_name, value, FieldFormat::Default, 0);
     }
 }
 
@@ -388,6 +388,15 @@ impl AddFieldAndValue for CommonSchemaPartCBuilder<'_> {
             },
         );
     }
+
+    fn add_str_value(&mut self, field_name: &'static str, value: &str) {
+        let field_name = if field_name == "message" {
+            "Body"
+        } else {
+            field_name
+        };
+        <&mut EventBuilder as AddFieldAndValue>::add_str_value(&mut self.eb, field_name, value);
+    }
 }
 
 impl<Mode: OutputMode> super::EventWriter<CommonSchemaOutput> for Provider<Mode> {
@@ -428,8 +437,8 @@ impl<Mode: OutputMode> super::EventWriter<CommonSchemaOutput> for Provider<Mode>
             eb.add_value("__csver__", 0x0401, FieldFormat::SignedInt, 0);
             eb.add_struct("PartA", 2 /* + exts.len() as u8*/, 0);
             {
-                let time: String = time::to_rfc3339(start_stop_times.1);
-                eb.add_str("time", time, FieldFormat::Default, 0);
+                let stop_time = time::to_rfc3339(start_stop_times.1);
+                eb.add_str("time", stop_time.as_str(), FieldFormat::Default, 0);
 
                 eb.add_struct("ext_dt", 2, 0);
                 {
@@ -467,7 +476,7 @@ impl<Mode: OutputMode> super::EventWriter<CommonSchemaOutput> for Provider<Mode>
 
                 eb.add_str(
                     "startTime",
-                    &time::to_rfc3339(start_stop_times.0),
+                    time::to_rfc3339(start_stop_times.0).as_str(),
                     FieldFormat::Default,
                     0,
                 );
@@ -513,6 +522,8 @@ impl<Mode: OutputMode> super::EventWriter<CommonSchemaOutput> for Provider<Mode>
             self.register_set(Self::map_level(level), keyword)
         };
 
+        // Format once; PartA time and PartB eventTime are the same instant.
+        let event_time = time::to_rfc3339(timestamp);
         context.with_builder(|mut eb| {
             eb.reset(event_name, event_tag as u16);
             eb.opcode(Opcode::Info);
@@ -528,8 +539,7 @@ impl<Mode: OutputMode> super::EventWriter<CommonSchemaOutput> for Provider<Mode>
                 0,
             );
             {
-                let time: String = time::to_rfc3339(timestamp);
-                eb.add_str("time", time, FieldFormat::Default, 0);
+                eb.add_str("time", event_time.as_str(), FieldFormat::Default, 0);
 
                 if let Some(span_strings) = span_strings {
                     eb.add_struct("ext_dt", 2, 0);
@@ -545,12 +555,7 @@ impl<Mode: OutputMode> super::EventWriter<CommonSchemaOutput> for Provider<Mode>
                 eb.add_str("_typeName", "Log", FieldFormat::Default, 0);
                 eb.add_str("name", event_name, FieldFormat::Default, 0);
 
-                eb.add_str(
-                    "eventTime",
-                    &time::to_rfc3339(timestamp),
-                    FieldFormat::Default,
-                    0,
-                );
+                eb.add_str("eventTime", event_time.as_str(), FieldFormat::Default, 0);
             }
 
             let partc_field_count = event.fields().count() as u8;

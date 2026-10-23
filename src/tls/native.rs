@@ -91,7 +91,7 @@ impl<T> LocalKey<T> {
             value = Box::into_raw(initialized).cast();
             core::mem::forget(reset);
         }
-        // SAFETY: Only this thread/fiber can access its slot. The allocation
+        // SAFETY: Only this thread can access its slot. The allocation
         // survives until its native destructor, and the callback cannot retain
         // a reference beyond this call.
         f(unsafe { &(*value.cast::<Value<T>>()).value })
@@ -107,7 +107,7 @@ impl<T> LocalKey<T> {
         if value.is_null() || value == BUSY {
             return None;
         }
-        // SAFETY: As in with(), this thread/fiber owns the live allocation and
+        // SAFETY: As in with(), this thread owns the live allocation and
         // the callback cannot retain a borrow beyond this call.
         Some(f(unsafe { &(*value.cast::<Value<T>>()).value }))
     }
@@ -134,14 +134,11 @@ pub(super) unsafe fn destroy<T: 'static>(data: *mut c_void) {
     // the native runtime transfers ownership of the slot to this callback.
     let value = unsafe { Box::from_raw(data.cast::<Value<T>>()) };
     let key = value.key;
-    let is_current = key.is_current(data);
-    if is_current {
-        key.set(BUSY);
-    }
+    // The native runtime cleared this thread's slot before this call. Mark it
+    // busy so the value's destructor cannot reinitialize it mid-destruction.
+    key.set(BUSY);
     drop(value);
-    if is_current {
-        key.set(ptr::null_mut());
-    }
+    key.set(ptr::null_mut());
 }
 
 #[cfg(test)]

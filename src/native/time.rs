@@ -4,8 +4,7 @@
 //! `timespec`. Clock reads, calendar arithmetic, and formatting do not use the
 //! Rust standard library.
 
-extern crate alloc;
-use alloc::string::String;
+use crate::values::FormatBuffer;
 use core::fmt::Write;
 #[cfg(any(windows, unix))]
 use core::mem::MaybeUninit;
@@ -178,9 +177,14 @@ fn days_from_civil(year: i64, month: u8, day: u8) -> i64 {
     era * 146_097 + doe - 719_468
 }
 
+// Fits every four-digit year with nanoseconds; extreme years spill to the heap.
+const RFC3339_CAPACITY: usize = 40;
+
 /// Formats UTC with Chrono-compatible automatic fractional-second precision.
-pub(crate) fn to_rfc3339(ct: CivilTime) -> String {
-    let mut out = String::with_capacity(35);
+///
+/// Formats into inline storage so per-event timestamps do not allocate.
+pub(crate) fn to_rfc3339(ct: CivilTime) -> FormatBuffer<RFC3339_CAPACITY> {
+    let mut out = FormatBuffer::new();
     if (0..=9_999).contains(&ct.year) {
         write!(out, "{:04}", ct.year).expect("Writing a year to String failed");
     } else {
@@ -203,7 +207,8 @@ pub(crate) fn to_rfc3339(ct: CivilTime) -> String {
         }
         .expect("Writing fractional seconds to String failed");
     }
-    out.push_str("+00:00");
+    out.write_str("+00:00")
+        .expect("Writing a timestamp to String failed");
     out
 }
 
@@ -218,11 +223,11 @@ mod tests {
     #[test]
     fn epoch_and_known_datetime() {
         assert_eq!(
-            to_rfc3339(Timestamp::UNIX_EPOCH.into()),
+            to_rfc3339(Timestamp::UNIX_EPOCH.into()).as_str(),
             "1970-01-01T00:00:00+00:00"
         );
         assert_eq!(
-            to_rfc3339(at(1_704_164_645, 0)),
+            to_rfc3339(at(1_704_164_645, 0)).as_str(),
             "2024-01-02T03:04:05+00:00"
         );
     }
@@ -234,7 +239,7 @@ mod tests {
             (1_582_977_600, "2020-02-29T12:00:00+00:00"),
             (4_107_542_400, "2100-03-01T00:00:00+00:00"),
         ] {
-            assert_eq!(to_rfc3339(at(secs, 0)), expected);
+            assert_eq!(to_rfc3339(at(secs, 0)).as_str(), expected);
         }
     }
 
@@ -245,7 +250,7 @@ mod tests {
             (123_456_000, "2024-01-02T03:04:05.123456+00:00"),
             (123_456_700, "2024-01-02T03:04:05.123456700+00:00"),
         ] {
-            assert_eq!(to_rfc3339(at(1_704_164_645, nanos)), expected);
+            assert_eq!(to_rfc3339(at(1_704_164_645, nanos)).as_str(), expected);
         }
     }
 
@@ -257,7 +262,7 @@ mod tests {
             (-2, 500_000_000, "1969-12-31T23:59:58.500+00:00"),
         ] {
             let ct = CivilTime::from_unix(seconds, nanoseconds);
-            assert_eq!(to_rfc3339(ct), expected);
+            assert_eq!(to_rfc3339(ct).as_str(), expected);
             assert_eq!(ct.unix_seconds(), seconds);
         }
     }
@@ -286,7 +291,7 @@ mod tests {
             (10_000, "+10000-01-01T00:00:00+00:00"),
         ] {
             let secs = days_from_civil(year, 1, 1) * 86_400;
-            assert_eq!(to_rfc3339(CivilTime::from_unix(secs, 0)), expected);
+            assert_eq!(to_rfc3339(CivilTime::from_unix(secs, 0)).as_str(), expected);
         }
     }
 
@@ -318,7 +323,7 @@ mod tests {
             ),
         ] {
             let timestamp = filetime(ticks);
-            assert_eq!(to_rfc3339(timestamp.into()), expected);
+            assert_eq!(to_rfc3339(timestamp.into()).as_str(), expected);
             assert_eq!(timestamp.unix_nanoseconds(), nanoseconds);
         }
     }
@@ -342,7 +347,7 @@ mod tests {
             let mut timestamp = Timestamp::UNIX_EPOCH;
             timestamp.value.tv_sec = seconds;
             timestamp.value.tv_nsec = nanoseconds;
-            assert_eq!(to_rfc3339(timestamp.into()), expected);
+            assert_eq!(to_rfc3339(timestamp.into()).as_str(), expected);
             assert_eq!(
                 timestamp.unix_nanoseconds(),
                 i128::from(seconds) * 1_000_000_000 + i128::from(nanoseconds),

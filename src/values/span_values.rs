@@ -1,6 +1,6 @@
 use core::fmt::Write;
 extern crate alloc;
-use alloc::string::{String, ToString};
+use alloc::string::ToString;
 
 use tracing::field;
 
@@ -34,12 +34,17 @@ pub(crate) fn update_span_value(
 
 impl<F: FnMut(&'static str, ValueTypes)> field::Visit for SpanValueVisitor<F> {
     fn record_debug(&mut self, field: &field::Field, value: &dyn core::fmt::Debug) {
-        let mut string = String::with_capacity(10); // Just a guess
+        // Format on the stack, then copy once into an exactly sized string
+        // instead of growing a heap buffer.
+        let mut string = FormatBuffer::<FORMAT_INLINE_CAPACITY>::new();
         if write!(string, "{:?}", value).is_err() {
             return;
         }
 
-        (self.record)(field.name(), ValueTypes::v_str(Cow::from(string)));
+        (self.record)(
+            field.name(),
+            ValueTypes::v_str(Cow::from(string.into_string())),
+        );
     }
 
     fn record_f64(&mut self, field: &field::Field, value: f64) {
@@ -101,6 +106,11 @@ mod tests {
     impl AddFieldAndValue for &mut Recorder {
         fn add_field_value(&mut self, fv: &FieldAndValue) {
             self.0.push((fv.field_name, fv.value.clone()));
+        }
+
+        fn add_str_value(&mut self, field_name: &'static str, value: &str) {
+            self.0
+                .push((field_name, ValueTypes::v_str(value.to_string().into())));
         }
     }
 

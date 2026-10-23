@@ -91,7 +91,7 @@ impl<T> LocalKey<T> {
             value = Box::into_raw(initialized).cast();
             core::mem::forget(reset);
         }
-        // SAFETY: Only this thread can access its slot. The allocation
+        // SAFETY: Only this thread/fiber can access its slot. The allocation
         // survives until its native destructor, and the callback cannot retain
         // a reference beyond this call.
         f(unsafe { &(*value.cast::<Value<T>>()).value })
@@ -107,7 +107,7 @@ impl<T> LocalKey<T> {
         if value.is_null() || value == BUSY {
             return None;
         }
-        // SAFETY: As in with(), this thread owns the live allocation and
+        // SAFETY: As in with(), this thread/fiber owns the live allocation and
         // the callback cannot retain a borrow beyond this call.
         Some(f(unsafe { &(*value.cast::<Value<T>>()).value }))
     }
@@ -134,11 +134,14 @@ pub(super) unsafe fn destroy<T: 'static>(data: *mut c_void) {
     // the native runtime transfers ownership of the slot to this callback.
     let value = unsafe { Box::from_raw(data.cast::<Value<T>>()) };
     let key = value.key;
-    // The native runtime cleared this thread's slot before this call. Mark it
-    // busy so the value's destructor cannot reinitialize it mid-destruction.
-    key.set(BUSY);
+    let is_current = key.is_current(data);
+    if is_current {
+        key.set(BUSY);
+    }
     drop(value);
-    key.set(ptr::null_mut());
+    if is_current {
+        key.set(ptr::null_mut());
+    }
 }
 
 #[cfg(test)]
@@ -160,6 +163,34 @@ mod tests {
         })
         .join()
         .unwrap();
+    }
+
+    #[test]
+    fn slot_is_busy_while_its_value_is_destroyed_at_thread_exit() {
+        // Destructors run from native thread-exit callbacks, which must not
+        // unwind, and std's panic/backtrace machinery is fragile there. So
+        // observe the busy state, which makes with() panic and try_with()
+        // return None, without panicking.
+        static DESTROYED: AtomicUsize = AtomicUsize::new(0);
+        static BUSY_DURING_DROP: AtomicUsize = AtomicUsize::new(0);
+        static INITS: AtomicUsize = AtomicUsize::new(0);
+        struct Reenter;
+        impl Drop for Reenter {
+            fn drop(&mut self) {
+                DESTROYED.fetch_add(1, Ordering::SeqCst);
+                if LOCAL.key().get() == BUSY && LOCAL.try_with(|_| ()).is_none() {
+                    BUSY_DURING_DROP.fetch_add(1, Ordering::SeqCst);
+                }
+            }
+        }
+        static LOCAL: LocalKey<Reenter> = LocalKey::new(|| {
+            INITS.fetch_add(1, Ordering::SeqCst);
+            Reenter
+        });
+        std::thread::spawn(|| LOCAL.with(|_| {})).join().unwrap();
+        assert_eq!(DESTROYED.load(Ordering::SeqCst), 1);
+        assert_eq!(BUSY_DURING_DROP.load(Ordering::SeqCst), 1);
+        assert_eq!(INITS.load(Ordering::SeqCst), 1);
     }
 
     #[test]

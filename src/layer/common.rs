@@ -1437,6 +1437,42 @@ mod tests {
         assert!(subscriber.try_close(root));
     }
 
+    // Windows runs some thread-exit callbacks under the process loader lock.
+    // Releasing entered spans at thread exit takes shard locks, so it must run
+    // outside the loader lock or contention would stall thread creation.
+    #[test]
+    fn blocked_thread_exit_cleanup_does_not_stall_thread_creation() {
+        let _probe = LOCK_PROBES.lock().unwrap();
+        let subscriber = new_subscriber();
+        let id = new_span(&subscriber, Parent::Root);
+        std::thread::scope(|scope| {
+            let (entered_tx, entered) = mpsc::channel();
+            let (exit_tx, exit) = mpsc::channel::<()>();
+            let subscriber = &subscriber;
+            let entered_id = id.clone();
+            let exiting = scope.spawn(move || {
+                subscriber.enter(&entered_id);
+                entered_tx.send(()).unwrap();
+                // Exit with the span entered, so cleanup releases the last reference.
+                exit.recv().unwrap();
+            });
+            entered.recv_timeout(Duration::from_secs(5)).unwrap();
+            assert!(!subscriber.try_close(id.clone()));
+            let guards: Vec<_> = SPAN_DATA.iter().map(|shard| shard.spans.write()).collect();
+            exit_tx.send(()).unwrap();
+            // Give the exiting thread time to block in its cleanup.
+            std::thread::sleep(Duration::from_millis(100));
+            let (started_tx, started) = mpsc::channel();
+            let starter = scope.spawn(move || started_tx.send(()).unwrap());
+            let result = started.recv_timeout(Duration::from_secs(5));
+            drop(guards);
+            exiting.join().unwrap();
+            starter.join().unwrap();
+            result.expect("Thread-exit cleanup must not block other threads from starting");
+        });
+        assert!(!contains(subscriber.subscriber_id, &id));
+    }
+
     #[test]
     fn releases_entered_references_when_a_thread_exits() {
         let subscriber = new_subscriber();

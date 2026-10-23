@@ -58,8 +58,8 @@
 //! Without `std`, [LayerBuilder::build] constructs the standalone subscriber;
 //! [LayerBuilder::build_subscriber] explicitly selects it in either configuration.
 //! Install it with `tracing::subscriber::set_global_default`. Span context and
-//! event builders use native thread-local storage with thread-exit cleanup.
-//! No-std executables supply their own panic handler and
+//! event builders use native thread-local storage with exit cleanup (fiber-local
+//! storage on Windows). No-std executables supply their own panic handler and
 //! native startup, as well as their allocator.
 //!
 //! ## Example
@@ -171,7 +171,8 @@
 //!   until the process exits; if this crate is used in a dynamic library that unloads
 //!   before the process exits, the memory will be leaked.
 //!
-//! - A thread-local event builder is allocated for each thread that logs an event.
+//! - A thread-local event builder is allocated for each thread that logs an event
+//!   (each Windows fiber when `std` is disabled).
 //!   This allows for complete thread safety when logging events. This allocation
 //!   will stay alive until the thread ends. Additionally, the builder itself will allocate
 //!   scratch space for constructing the event. This scratch space will grow to fit the

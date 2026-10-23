@@ -46,16 +46,16 @@ with `tracing::subscriber::set_global_default`. A no-std executable must also
 provide its panic handler and native startup, in addition to an allocator.
 Neither `tracing-subscriber` nor OpenTelemetry is required in this configuration.
 
-Without `std`, span stacks and reusable event builders use Windows TLS slots
+Without `std`, span stacks and reusable event builders use Windows FLS slots
 or Linux pthread keys. Values are initialized on first access and dropped by
-native thread-exit cleanup, releasing references held by entered spans.
-Windows runs destructors from a PE TLS callback (`.CRT$XLB`), as the standard
-library does; values are per thread and shared by a thread's fibers.
-Destructors may initialize other keys; cleanup repeats until none remain, up
-to four passes. Recursive initialization and access during destruction panic.
+native thread-exit callbacks, releasing references held by entered spans.
+Windows FLS also isolates values between fibers and runs cleanup on fiber
+deletion. FLS callbacks run outside the loader lock, so cleanup that waits on
+span locks does not stall thread creation or DLL loading. Recursive
+initialization and access during destruction panic.
 Native keys live for the process lifetime; per-thread values are freed at
 exit. With `std`, standard-library thread-local storage is unchanged.
-Cleanup follows native thread teardown; process termination does not
+Cleanup follows native thread/fiber teardown; process termination does not
 guarantee that destructors run.
 Native keys are published atomically after initialization, so subsequent key
 lookups do not acquire a lock.
@@ -108,7 +108,7 @@ Indexed lookup checks both the generation and subscriber identity without
 hashing. Freed slots are recycled with a new generation; exhausted generations
 retire their slots instead of wrapping, so stale IDs never address a new span.
 Each shard supports up to 2^27 slots and reports exhaustion rather than reusing
-an ID. Each thread selects a preferred shard on its first span. This
+an ID. Each thread/fiber selects a preferred shard on its first span. This
 replaces per-thread batches of globally allocated span IDs; subscriber IDs
 still use a checked global counter.
 

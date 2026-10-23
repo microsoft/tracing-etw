@@ -1,6 +1,10 @@
 use criterion::{Criterion, criterion_group, criterion_main};
 #[cfg(windows)]
-use std::any::TypeId;
+use std::{
+    any::TypeId,
+    sync::{Barrier, mpsc},
+    time::Instant,
+};
 #[cfg(windows)]
 use tracing::{Dispatch, Event, Level, Metadata, Subscriber, event, span};
 #[cfg(windows)]
@@ -76,6 +80,81 @@ impl<S: Subscriber> Subscriber for Unfiltered<S> {
         // SAFETY: The wrapped subscriber owns the returned downcast pointer.
         unsafe { self.0.downcast_raw(id) }
     }
+}
+
+#[cfg(windows)]
+fn four_thread_benchmark(c: &mut Criterion, dispatch: &Dispatch) {
+    const THREADS: usize = 4;
+    let barrier = Barrier::new(THREADS + 1);
+    let log = || {
+        let span = span!(
+            Level::INFO,
+            "Parallel span!",
+            field1 = 1,
+            field2 = "asdf",
+            field3 = 1.1
+        );
+        let _entered = span.enter();
+        span.record("field1", 5.5);
+        event!(
+            Level::INFO,
+            field1 = 1,
+            field2 = "asdf",
+            field3 = 1.1,
+            "Parallel event!"
+        );
+    };
+    std::thread::scope(|scope| {
+        let mut workers = Vec::with_capacity(THREADS);
+        for _ in 0..THREADS {
+            let (commands, work) = mpsc::channel::<u64>();
+            let (done, completed) = mpsc::channel();
+            let barrier = &barrier;
+            let log = &log;
+            scope.spawn(move || {
+                tracing::dispatcher::with_default(dispatch, || {
+                    {
+                        let span = span!(Level::INFO, "Parallel benchmark validation");
+                        assert!(!span.is_disabled(), "Workers must create spans");
+                        let _entered = span.enter();
+                        assert_eq!(tracing::Span::current().id(), span.id());
+                    }
+                    log();
+                    done.send(()).expect("Benchmark coordinator stopped");
+                    // Closing the command channel also stops workers during unwinding.
+                    while let Ok(iterations) = work.recv() {
+                        barrier.wait();
+                        for _ in 0..iterations {
+                            log();
+                        }
+                        done.send(()).expect("Benchmark coordinator stopped");
+                    }
+                });
+            });
+            workers.push((commands, completed));
+        }
+        for (_, completed) in &workers {
+            completed.recv().expect("Benchmark worker failed to start");
+        }
+
+        let mut group = c.benchmark_group("unfiltered/4 threads");
+        group.warm_up_time(std::time::Duration::from_millis(500));
+        group.throughput(criterion::Throughput::Elements(THREADS as u64));
+        group.bench_function("span+event", |b| {
+            b.iter_custom(|iterations| {
+                for (commands, _) in &workers {
+                    commands.send(iterations).expect("Benchmark worker stopped");
+                }
+                let start = Instant::now();
+                barrier.wait();
+                for (_, completed) in &workers {
+                    completed.recv().expect("Benchmark worker failed");
+                }
+                start.elapsed()
+            });
+        });
+        drop(workers);
+    });
 }
 
 #[cfg(windows)]
@@ -225,6 +304,8 @@ pub fn etw_benchmark(c: &mut Criterion) {
                 })
             });
         }
+
+        four_thread_benchmark(c, &dispatch);
     });
 }
 

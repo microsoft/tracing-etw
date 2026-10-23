@@ -347,6 +347,10 @@ pub(crate) fn addref_span(subscriber_id: u64, id: &tracing::span::Id) -> SpanCon
     let span = lookup
         .get_mut(&mut spans)
         .expect("Clone or enter of an unrecognized span");
+    retain_span_data(span)
+}
+
+fn retain_span_data(span: &mut SpanData) -> SpanContext {
     span.ref_count = span
         .ref_count
         .checked_add(1)
@@ -357,25 +361,32 @@ pub(crate) fn addref_span(subscriber_id: u64, id: &tracing::span::Id) -> SpanCon
     }
 }
 
+fn release_span_entry(
+    mut entry: hashbrown::hash_map::RawOccupiedEntryMut<'_, SpanKey, SpanData, ahash::RandomState>,
+) -> Option<SpanData> {
+    let span = entry.get_mut();
+    span.ref_count = span
+        .ref_count
+        .checked_sub(1)
+        .expect("Span reference count underflow");
+    (span.ref_count == 0).then(|| entry.remove())
+}
+
 pub(crate) fn release_span(subscriber_id: u64, id: &tracing::span::Id) -> bool {
     let mut current = (subscriber_id, id.clone());
     loop {
         let lookup = SpanLookup::new(&current);
         let mut removed = {
             let mut spans = lookup.shard().write();
-            let mut entry = match lookup.entry(&mut spans) {
+            let entry = match lookup.entry(&mut spans) {
                 RawEntryMut::Occupied(entry) => entry,
                 RawEntryMut::Vacant(_) => panic!("Close of an unrecognized span"),
             };
-            let span = entry.get_mut();
-            span.ref_count = span
-                .ref_count
-                .checked_sub(1)
-                .expect("Span reference count underflow");
-            if span.ref_count != 0 {
+            if let Some(removed) = release_span_entry(entry) {
+                removed
+            } else {
                 return current.1 != *id;
             }
-            entry.remove()
         };
         let parent = removed.retained_parent.take();
         drop(removed);
@@ -387,6 +398,7 @@ pub(crate) fn release_span(subscriber_id: u64, id: &tracing::span::Id) -> bool {
     }
 }
 
+#[cfg(feature = "std")]
 pub(crate) fn enter_span<OutMode: OutputMode>(
     subscriber_id: u64,
     id: &tracing::span::Id,
@@ -394,6 +406,46 @@ pub(crate) fn enter_span<OutMode: OutputMode>(
     keyword: u64,
     tag: u32,
     otel_span_strings: Option<OtelSpanStrings>,
+) {
+    enter_span_impl(
+        subscriber_id,
+        id,
+        writer,
+        keyword,
+        tag,
+        otel_span_strings,
+        None::<fn(SpanContext)>,
+    );
+}
+
+pub(crate) fn enter_span_retained<OutMode: OutputMode>(
+    subscriber_id: u64,
+    id: &tracing::span::Id,
+    writer: Pin<&impl EventWriter<OutMode>>,
+    keyword: u64,
+    tag: u32,
+    otel_span_strings: Option<OtelSpanStrings>,
+    on_enter: impl FnOnce(SpanContext),
+) {
+    enter_span_impl(
+        subscriber_id,
+        id,
+        writer,
+        keyword,
+        tag,
+        otel_span_strings,
+        Some(on_enter),
+    );
+}
+
+fn enter_span_impl<OutMode: OutputMode>(
+    subscriber_id: u64,
+    id: &tracing::span::Id,
+    writer: Pin<&impl EventWriter<OutMode>>,
+    keyword: u64,
+    tag: u32,
+    otel_span_strings: Option<OtelSpanStrings>,
+    on_enter: Option<impl FnOnce(SpanContext)>,
 ) {
     let timestamp = Timestamp::now();
 
@@ -403,9 +455,18 @@ pub(crate) fn enter_span<OutMode: OutputMode>(
     let data = if let Some(data) = lookup.get_mut(&mut span_data_guard) {
         data
     } else {
+        if on_enter.is_some() {
+            panic!("Clone or enter of an unrecognized span");
+        }
         debug_assert!(false, "Enter of unrecognized span");
         return;
     };
+
+    if let Some(on_enter) = on_enter {
+        // The caller transfers this reference into pre-reserved TLS storage
+        // without allocating or panicking, and releases its TLS borrow.
+        on_enter(retain_span_data(data));
+    }
 
     // TODO:
     //   - In order to mutate this, we currently have to lock the span's shard every time a span is entered.
@@ -424,6 +485,7 @@ pub(crate) fn enter_span<OutMode: OutputMode>(
     );
 }
 
+#[cfg(any(feature = "std", not(any(windows, target_os = "linux"))))]
 pub(crate) fn exit_span<OutMode: OutputMode>(
     subscriber_id: u64,
     id: &tracing::span::Id,
@@ -444,6 +506,24 @@ pub(crate) fn exit_span<OutMode: OutputMode>(
         return;
     };
 
+    write_span_stop(
+        data,
+        stop_timestamp,
+        writer,
+        keyword,
+        tag,
+        otel_span_strings,
+    );
+}
+
+fn write_span_stop<OutMode: OutputMode>(
+    data: &SpanData,
+    stop_timestamp: Timestamp,
+    writer: Pin<&impl EventWriter<OutMode>>,
+    keyword: u64,
+    tag: u32,
+    otel_span_strings: Option<OtelSpanStrings>,
+) {
     writer.span_stop(
         (data.start_time.into(), stop_timestamp.into()),
         SpanRef {
@@ -453,6 +533,47 @@ pub(crate) fn exit_span<OutMode: OutputMode>(
         keyword,
         tag,
     );
+}
+
+#[cfg(all(not(feature = "std"), any(windows, target_os = "linux")))]
+pub(crate) fn exit_span_releasing<OutMode: OutputMode>(
+    subscriber_id: u64,
+    id: &tracing::span::Id,
+    writer: Pin<&impl EventWriter<OutMode>>,
+    keyword: u64,
+    tag: u32,
+    otel_span_strings: Option<OtelSpanStrings>,
+    retained: &mut Option<SpanContext>,
+) {
+    let stop_timestamp = Timestamp::now();
+    let key = (subscriber_id, id.clone());
+    let lookup = SpanLookup::new(&key);
+    let removed = {
+        let mut spans = lookup.shard().write();
+        let entry = match lookup.entry(&mut spans) {
+            RawEntryMut::Occupied(entry) => entry,
+            RawEntryMut::Vacant(_) => panic!("Exit of unrecognized span"),
+        };
+        let data = entry.get();
+        write_span_stop(
+            data,
+            stop_timestamp,
+            writer,
+            keyword,
+            tag,
+            otel_span_strings,
+        );
+        let removed = release_span_entry(entry);
+        *retained = None;
+        removed
+    };
+    if let Some(mut removed) = removed {
+        let parent = removed.retained_parent.take();
+        drop(removed);
+        if let Some(parent) = parent {
+            release_span(subscriber_id, &parent);
+        }
+    }
 }
 
 pub(crate) fn update_span_values(
@@ -1128,6 +1249,113 @@ mod tests {
         ) {
             *self.0.lock().unwrap() = Some((current_span, parent_span, span_strings));
         }
+    }
+
+    #[cfg(all(not(feature = "std"), any(windows, target_os = "linux")))]
+    #[test]
+    fn fused_exit_releases_its_reference_and_cascades_to_the_parent() {
+        for close_original in [false, true] {
+            let subscriber = new_subscriber();
+            let parent = new_span(&subscriber, Parent::Root);
+            let child = new_span(&subscriber, Parent::Explicit(&parent));
+            let writer = RecordingWriter::default();
+            let mut retained = None;
+            enter_span_retained(
+                subscriber.subscriber_id,
+                &child,
+                Pin::new(&writer),
+                1,
+                0,
+                None,
+                |context| retained = Some(context),
+            );
+            assert!(!subscriber.try_close(parent.clone()));
+            if close_original {
+                assert!(!subscriber.try_close(child.clone()));
+            }
+            exit_span_releasing(
+                subscriber.subscriber_id,
+                &child,
+                Pin::new(&writer),
+                1,
+                0,
+                None,
+                &mut retained,
+            );
+            assert!(retained.is_none());
+            if !close_original {
+                assert!(contains(subscriber.subscriber_id, &child));
+                assert!(contains(subscriber.subscriber_id, &parent));
+                assert!(subscriber.try_close(child.clone()));
+            }
+            assert!(!contains(subscriber.subscriber_id, &child));
+            assert!(!contains(subscriber.subscriber_id, &parent));
+        }
+    }
+
+    #[cfg(all(not(feature = "std"), any(windows, target_os = "linux")))]
+    #[test]
+    fn failed_stop_leaves_the_entered_reference_owned_by_the_caller() {
+        struct PanickingWriter;
+        impl EventWriter<NormalOutput> for PanickingWriter {
+            fn span_start(self: Pin<&Self>, _: SpanRef<'_>, _: u64, _: u32) {}
+            fn span_stop(
+                self: Pin<&Self>,
+                _: (
+                    crate::native::time::CivilTime,
+                    crate::native::time::CivilTime,
+                ),
+                _: SpanRef<'_>,
+                _: u64,
+                _: u32,
+            ) {
+                panic!("Injected stop failure");
+            }
+            fn write_record(
+                self: Pin<&Self>,
+                _: crate::native::time::CivilTime,
+                _: u64,
+                _: u64,
+                _: &str,
+                _: &tracing::Level,
+                _: u64,
+                _: u32,
+                _: &tracing::Event<'_>,
+                _: Option<SpanStrings>,
+            ) {
+                unreachable!();
+            }
+        }
+        let subscriber = new_subscriber();
+        let id = new_span(&subscriber, Parent::Root);
+        let mut retained = None;
+        enter_span_retained(
+            subscriber.subscriber_id,
+            &id,
+            Pin::new(&PanickingWriter),
+            1,
+            0,
+            None,
+            |context| retained = Some(context),
+        );
+        assert!(!subscriber.try_close(id.clone()));
+        let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            exit_span_releasing(
+                subscriber.subscriber_id,
+                &id,
+                Pin::new(&PanickingWriter),
+                1,
+                0,
+                None,
+                &mut retained,
+            );
+        }));
+        assert!(result.is_err());
+        let context = retained
+            .take()
+            .expect("Failed emission must not consume the reference");
+        assert!(release_span(subscriber.subscriber_id, &context.id()));
+        assert!(!contains(subscriber.subscriber_id, &id));
     }
 
     #[test]

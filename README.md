@@ -68,6 +68,17 @@ Recorded span values are formatted before acquiring the map lock; replaced
 values and removed span payloads are destroyed after releasing it. Span
 start/stop encoding still borrows the payload under its shard's lock.
 
+Standalone span entry retains its reference and emits the start event under
+one shard acquisition, after preparing thread-local storage outside the lock.
+On native no-std targets, exit emits the stop event and releases the entered
+reference under one exclusive acquisition. Standard-library-backed exit keeps
+its shared emission lock so an emission panic does not newly poison the lock.
+Removed payloads and retained parents are still released outside the guard.
+Standalone span IDs are allocated in thread/fiber-local batches of up to 1024
+from the same global counter used for subscriber IDs. Batches share the existing
+span-stack TLS slot; IDs remain globally unique and nonzero, but unused IDs in
+a batch are not recycled at thread/fiber exit.
+
 Span storage uses 32 independently locked, cache-line-aligned shards selected
 by a hash of the full `(subscriber_id, span_id)` key. Each lookup hashes the
 key once and reuses that hash for map access. Shard selection uses middle

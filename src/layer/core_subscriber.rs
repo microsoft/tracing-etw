@@ -9,48 +9,82 @@ use crate::{layer::common, native::ProviderTraits, statics::get_event_metadata};
 use super::*;
 
 static NEXT_ID: AtomicU64 = AtomicU64::new(1);
+const ID_BATCH_SIZE: u64 = 1024;
 
-pub(crate) fn next_id() -> u64 {
-    let mut id = NEXT_ID.load(Ordering::Relaxed);
+#[cold]
+fn reserve_ids(counter: &AtomicU64, count: u64) -> (u64, u64) {
+    let mut id = counter.load(Ordering::Relaxed);
     loop {
-        let next = id
-            .checked_add(1)
-            .expect("Span and subscriber IDs exhausted");
-        match NEXT_ID.compare_exchange_weak(id, next, Ordering::Relaxed, Ordering::Relaxed) {
-            Ok(_) => return id,
+        let end = id.saturating_add(count);
+        assert!(end > id, "Span and subscriber IDs exhausted");
+        match counter.compare_exchange_weak(id, end, Ordering::Relaxed, Ordering::Relaxed) {
+            Ok(_) => return (id, end),
             Err(current) => id = current,
         }
     }
 }
 
+pub(crate) fn next_id() -> u64 {
+    reserve_ids(&NEXT_ID, 1).0
+}
+
+struct IdBatch {
+    next: u64,
+    end: u64,
+}
+
+impl IdBatch {
+    #[inline]
+    fn next(&mut self, counter: &AtomicU64) -> u64 {
+        if self.next == self.end {
+            (self.next, self.end) = reserve_ids(counter, ID_BATCH_SIZE);
+        }
+        let id = self.next;
+        self.next += 1;
+        id
+    }
+}
+
 struct EnteredSpan {
     subscriber_id: u64,
-    context: common::SpanContext,
+    context: Option<common::SpanContext>,
 }
 
 impl Drop for EnteredSpan {
     fn drop(&mut self) {
-        common::release_span(self.subscriber_id, &self.context.id());
+        if let Some(context) = self.context.take() {
+            common::release_span(self.subscriber_id, &context.id());
+        }
+    }
+}
+
+struct ThreadState {
+    spans: Vec<EnteredSpan>,
+    ids: IdBatch,
+}
+
+impl ThreadState {
+    fn current_span_context(&self, subscriber_id: u64) -> Option<common::SpanContext> {
+        self.spans
+            .iter()
+            .rev()
+            .find(|span| span.subscriber_id == subscriber_id)
+            .and_then(|span| span.context)
     }
 }
 
 crate::tls::thread_local! {
-    static ENTERED_SPANS: RefCell<Vec<EnteredSpan>> = const { RefCell::new(Vec::new()) };
+    static THREAD_STATE: RefCell<ThreadState> = const {
+        RefCell::new(ThreadState {
+            spans: Vec::new(),
+            ids: IdBatch { next: 0, end: 0 },
+        })
+    };
 }
 
 impl<OutMode: OutputMode> _EtwTracingSubscriber<OutMode> {
-    fn current_span_id(&self) -> Option<tracing_core::span::Id> {
-        self.current_span_context().map(common::SpanContext::id)
-    }
-
     fn current_span_context(&self) -> Option<common::SpanContext> {
-        ENTERED_SPANS.with_borrow(|spans| {
-            spans
-                .iter()
-                .rev()
-                .find(|span| span.subscriber_id == self.subscriber_id)
-                .map(|span| span.context)
-        })
+        THREAD_STATE.with_borrow(|state| state.current_span_context(self.subscriber_id))
     }
 }
 
@@ -88,12 +122,17 @@ where
     }
 
     fn new_span(&self, attrs: &tracing_core::span::Attributes<'_>) -> tracing_core::span::Id {
-        let id = tracing::span::Id::from_u64(next_id());
-        let parent = if attrs.is_contextual() {
-            self.current_span_id()
-        } else {
-            attrs.parent().cloned()
-        };
+        let (id, parent) = THREAD_STATE.with_borrow_mut(|state| {
+            let id = tracing::span::Id::from_u64(state.ids.next(&NEXT_ID));
+            let parent = if attrs.is_contextual() {
+                state
+                    .current_span_context(self.subscriber_id)
+                    .map(common::SpanContext::id)
+            } else {
+                attrs.parent().cloned()
+            };
+            (id, parent)
+        });
 
         common::create_span_data_for_new_span(self.subscriber_id, attrs, &id, parent.as_ref());
 
@@ -156,39 +195,47 @@ where
     }
 
     fn enter(&self, id: &tracing_core::span::Id) {
-        let context = common::addref_span(self.subscriber_id, id);
-        let entered = EnteredSpan {
-            subscriber_id: self.subscriber_id,
-            context,
-        };
-        ENTERED_SPANS.with_borrow_mut(|spans| {
-            spans.push(entered);
+        THREAD_STATE.with(|state| {
+            let mut state = state.borrow_mut();
+            // Initialize TLS and reserve capacity before retaining under the shard lock.
+            state.spans.reserve(1);
+            common::enter_span_retained(
+                self.subscriber_id,
+                id,
+                self.provider.as_ref(),
+                self.default_keyword,
+                0,
+                None,
+                |context| {
+                    state.spans.push(EnteredSpan {
+                        subscriber_id: self.subscriber_id,
+                        context: Some(context),
+                    });
+                    // Emission can access the current span without borrowing conflicts.
+                    drop(state);
+                },
+            );
         });
-        // Spans don't have callsites to store keyword/tag metadata on,
-        // so we must use the defaults.
-        common::enter_span(
-            self.subscriber_id,
-            id,
-            self.provider.as_ref(),
-            self.default_keyword,
-            0,
-            None,
-        );
     }
 
     fn exit(&self, id: &tracing_core::span::Id) {
-        let entered = ENTERED_SPANS.with_borrow_mut(|spans| {
-            let index = spans
+        #[allow(unused_mut)]
+        let mut entered = THREAD_STATE.with_borrow_mut(|state| {
+            let index = state
+                .spans
                 .iter()
                 .rposition(|span| {
                     span.subscriber_id == self.subscriber_id
-                        && span.context.ids.span_id == id.into_non_zero_u64()
+                        && span
+                            .context
+                            .is_some_and(|context| context.ids.span_id == id.into_non_zero_u64())
                 })
                 .expect("Exit of a span that is not entered on this thread");
-            spans.remove(index)
+            state.spans.remove(index)
         });
         // Spans don't have callsites to store keyword/tag metadata on,
         // so we must use the defaults.
+        #[cfg(any(feature = "std", not(any(windows, target_os = "linux"))))]
         common::exit_span(
             self.subscriber_id,
             id,
@@ -196,6 +243,16 @@ where
             self.default_keyword,
             0,
             None,
+        );
+        #[cfg(all(not(feature = "std"), any(windows, target_os = "linux")))]
+        common::exit_span_releasing(
+            self.subscriber_id,
+            id,
+            self.provider.as_ref(),
+            self.default_keyword,
+            0,
+            None,
+            &mut entered.context,
         );
         drop(entered);
     }
@@ -205,6 +262,60 @@ where
 mod tests {
     use super::*;
     use tracing_core::{Subscriber, callsite::Callsite};
+
+    #[test]
+    fn concurrent_id_batches_do_not_overlap_single_id_reservations() {
+        let counter = AtomicU64::new(1);
+        let mut ids = alloc::vec![reserve_ids(&counter, 1).0];
+        std::thread::scope(|scope| {
+            let mut workers = Vec::new();
+            for _ in 0..4 {
+                let counter = &counter;
+                workers.push(scope.spawn(move || {
+                    let mut batch = IdBatch { next: 0, end: 0 };
+                    (0..3 * ID_BATCH_SIZE)
+                        .map(|_| batch.next(counter))
+                        .collect::<Vec<_>>()
+                }));
+            }
+            ids.push(reserve_ids(&counter, 1).0);
+            for worker in workers {
+                ids.extend(worker.join().unwrap());
+            }
+        });
+        ids.sort_unstable();
+        assert_eq!(
+            ids,
+            (1..counter.load(Ordering::Relaxed)).collect::<Vec<_>>()
+        );
+    }
+
+    #[test]
+    fn final_id_batch_does_not_wrap_or_reuse_ids() {
+        let counter = AtomicU64::new(u64::MAX - 3);
+        let mut batch = IdBatch { next: 0, end: 0 };
+        assert_eq!(batch.next(&counter), u64::MAX - 3);
+        assert_eq!(batch.next(&counter), u64::MAX - 2);
+        assert_eq!(batch.next(&counter), u64::MAX - 1);
+        assert_eq!(counter.load(Ordering::Relaxed), u64::MAX);
+        let result =
+            std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| batch.next(&counter)));
+        assert!(result.is_err());
+        assert_eq!(counter.load(Ordering::Relaxed), u64::MAX);
+    }
+
+    #[cfg(all(not(feature = "std"), any(windows, target_os = "linux")))]
+    #[test]
+    fn entering_an_unknown_span_panics_even_in_release_builds() {
+        let subscriber = crate::LayerBuilder::new("UnknownEntryTests")
+            .build_subscriber()
+            .unwrap();
+        let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            subscriber.enter(&tracing::span::Id::from_u64(u64::MAX));
+        }));
+        assert!(result.is_err());
+        assert!(subscriber.current_span().id().is_none());
+    }
 
     #[test]
     fn releases_the_entered_reference_if_tls_access_panics() {
@@ -223,7 +334,7 @@ mod tests {
         .metadata();
         let values = metadata.fields().value_set(&[]);
         let id = subscriber.new_span(&tracing_core::span::Attributes::new_root(metadata, &values));
-        let result = ENTERED_SPANS.with_borrow_mut(|_| {
+        let result = THREAD_STATE.with_borrow_mut(|_| {
             std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| subscriber.enter(&id)))
         });
         assert!(result.is_err());

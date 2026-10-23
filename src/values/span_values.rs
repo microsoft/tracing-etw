@@ -73,7 +73,67 @@ impl<F: FnMut(&'static str, ValueTypes)> field::Visit for SpanValueVisitor<F> {
         );
     }
 
-    #[cfg(feature = "std")]
-    fn record_error(&mut self, _field: &field::Field, _value: &(dyn core::error::Error + 'static)) {
+    // record_error is intentionally not overridden. tracing-core declares it only
+    // with its own `std` feature, which feature unification can enable regardless
+    // of this crate's features. Its default records errors as Display strings.
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::values::event_values::{AddFieldAndValue, EventBuilderVisitorWrapper};
+    use alloc::vec::Vec;
+    use tracing::callsite::Callsite;
+
+    #[derive(Debug)]
+    struct TestError;
+
+    impl core::fmt::Display for TestError {
+        fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+            f.write_str("test error")
+        }
+    }
+
+    impl core::error::Error for TestError {}
+
+    struct Recorder(Vec<(&'static str, ValueTypes)>);
+
+    impl AddFieldAndValue for &mut Recorder {
+        fn add_field_value(&mut self, fv: &FieldAndValue) {
+            self.0.push((fv.field_name, fv.value.clone()));
+        }
+    }
+
+    fn assert_error_string(recorded: &[(&'static str, ValueTypes)]) {
+        assert!(matches!(
+            recorded,
+            [("error", ValueTypes::v_str(value))] if value == "test error"
+        ));
+    }
+
+    #[test]
+    fn span_and_event_visitors_record_errors_as_strings() {
+        let metadata = tracing::callsite! {
+            name: "error field",
+            kind: tracing::metadata::Kind::EVENT,
+            target: module_path!(),
+            level: tracing::Level::INFO,
+            fields: error
+        }
+        .metadata();
+        let error: &(dyn core::error::Error + 'static) = &TestError;
+        let record = |visitor: &mut dyn field::Visit| {
+            tracing::valueset!(metadata.fields(), error = error).record(visitor)
+        };
+
+        let mut spans = Vec::new();
+        record(&mut SpanValueVisitor {
+            record: |name, value| spans.push((name, value)),
+        });
+        assert_error_string(&spans);
+
+        let mut events = Recorder(Vec::new());
+        record(&mut EventBuilderVisitorWrapper::from(&mut events));
+        assert_error_string(&events.0);
     }
 }

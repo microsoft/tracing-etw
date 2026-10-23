@@ -1,6 +1,6 @@
 use core::ffi::c_void;
 use windows_sys::Win32::{
-    Foundation::{GetLastError, SetLastError},
+    Foundation::GetLastError,
     System::Threading::{FLS_OUT_OF_INDEXES, FlsAlloc, FlsGetValue, FlsSetValue},
 };
 

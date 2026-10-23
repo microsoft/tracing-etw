@@ -1,7 +1,6 @@
 extern crate alloc;
 use alloc::boxed::Box;
 use core::{
-    cell::RefCell,
     ffi::c_void,
     ptr,
     sync::atomic::{AtomicPtr, Ordering},
@@ -9,6 +8,26 @@ use core::{
 
 use super::Key;
 use crate::sync::LazyLock;
+
+#[cfg(test)]
+use core::cell::RefCell;
+
+#[cfg(test)]
+std::thread_local! {
+    static ACCESSES: core::cell::Cell<usize> = const { core::cell::Cell::new(0) };
+}
+
+#[cfg(test)]
+pub(crate) fn access_count() -> usize {
+    ACCESSES.with(core::cell::Cell::get)
+}
+
+#[inline]
+fn read_slot(key: &Key) -> *mut c_void {
+    #[cfg(test)]
+    let _ = ACCESSES.try_with(|accesses| accesses.set(accesses.get() + 1));
+    key.get()
+}
 
 // Value contains a key reference, so its allocation cannot use this unaligned address.
 const BUSY: *mut c_void = ptr::without_provenance_mut(1);
@@ -56,7 +75,7 @@ impl<T> LocalKey<T> {
 
     pub(crate) fn with<R>(&'static self, f: impl FnOnce(&T) -> R) -> R {
         let key = self.key();
-        let mut value = key.get();
+        let mut value = read_slot(key);
         assert!(
             value != BUSY,
             "Thread-local value accessed during initialization or destruction"
@@ -84,7 +103,7 @@ impl<T> LocalKey<T> {
             return None;
         }
         // SAFETY: Publication keeps this immutable key alive for the process.
-        let value = unsafe { &*key }.get();
+        let value = read_slot(unsafe { &*key });
         if value.is_null() || value == BUSY {
             return None;
         }
@@ -94,6 +113,7 @@ impl<T> LocalKey<T> {
     }
 }
 
+#[cfg(test)]
 impl<T> LocalKey<RefCell<T>> {
     pub(crate) fn with_borrow<R>(&'static self, f: impl FnOnce(&T) -> R) -> R {
         self.with(|value| f(&value.borrow()))

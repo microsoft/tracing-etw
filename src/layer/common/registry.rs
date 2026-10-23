@@ -1,4 +1,56 @@
 use super::*;
+use hashbrown::{HashMap, hash_map::RawEntryMut};
+
+const SPAN_HASHER: ahash::RandomState = ahash::RandomState::with_seeds(
+    17_616_942_133_695_121_499,
+    9_565_839_503_509_016_163,
+    2_756_528_679_765_226_774,
+    228_784_672_216_536_063,
+);
+
+#[derive(Clone, Copy)]
+struct SpanLookup<'a> {
+    key: &'a SpanKey,
+    hash: u64,
+}
+
+impl<'a> SpanLookup<'a> {
+    #[inline]
+    fn new(key: &'a SpanKey) -> Self {
+        Self {
+            key,
+            hash: core::hash::BuildHasher::hash_one(&SPAN_HASHER, key),
+        }
+    }
+
+    #[inline]
+    fn shard_index(self) -> usize {
+        (self.hash >> 32) as usize & (SPAN_SHARD_COUNT - 1)
+    }
+
+    fn get(self, spans: &RegistrySpanIndex) -> Option<&RegistrySpanData> {
+        spans
+            .raw_entry()
+            .from_key_hashed_nocheck(self.hash, self.key)
+            .map(|(_, data)| data)
+    }
+
+    fn entry(
+        self,
+        spans: &mut RegistrySpanIndex,
+    ) -> RawEntryMut<'_, SpanKey, RegistrySpanData, ahash::RandomState> {
+        spans
+            .raw_entry_mut()
+            .from_key_hashed_nocheck(self.hash, self.key)
+    }
+
+    fn get_mut(self, spans: &mut RegistrySpanIndex) -> Option<&mut RegistrySpanData> {
+        match self.entry(spans) {
+            RawEntryMut::Occupied(entry) => Some(entry.into_mut()),
+            RawEntryMut::Vacant(_) => None,
+        }
+    }
+}
 
 struct RegistrySpanData {
     data: SpanData,
@@ -15,7 +67,7 @@ impl RegistrySpanData {
     }
 }
 
-type RegistrySpanIndex = SpanIndex<RegistrySpanData>;
+type RegistrySpanIndex = HashMap<SpanKey, RegistrySpanData, ahash::RandomState>;
 
 static SPAN_DATA: [SpanShard<RegistrySpanIndex>; SPAN_SHARD_COUNT] = [const {
     SpanShard {
@@ -33,14 +85,18 @@ pub(crate) fn create_span_data_for_new_span(
     id: &tracing::span::Id,
     parent: Option<&tracing::span::Id>,
 ) {
-    super::create_span_data(
-        subscriber_id,
-        attrs,
-        id,
-        parent,
+    let data = PreparedSpanData::new(attrs).finish(id, parent);
+    let key = (subscriber_id, id.clone());
+    let lookup = SpanLookup::new(&key);
+    let parent_key = parent.map(|parent| (subscriber_id, parent.clone()));
+    let parent = parent_key.as_ref().map(SpanLookup::new);
+    let unused = with_span_shards(
         &SPAN_DATA,
-        insert_span_data,
+        lookup.shard_index(),
+        parent.map(SpanLookup::shard_index),
+        |spans, parents| insert_span_data(spans, parents, lookup, data, parent),
     );
+    drop(unused);
 }
 
 fn insert_span_data(
@@ -233,6 +289,36 @@ mod tests {
     }
 
     #[test]
+    fn registry_growth_preserves_precomputed_hashes_and_bucket_distribution() {
+        let subscriber = new_subscriber();
+        let subscriber_id = subscriber.subscriber_id;
+        let ids: Vec<_> = (1..)
+            .map(Id::from_u64)
+            .filter(|id| {
+                SpanLookup::new(&(subscriber_id, id.clone())).shard_index() == SPAN_SHARD_COUNT / 2
+            })
+            .take(256)
+            .collect();
+        let mut buckets = 0u8;
+        for id in &ids {
+            buckets |= 1 << (SpanLookup::new(&(subscriber_id, id.clone())).hash & 7);
+            let values = META.fields().value_set(&[]);
+            create_span_data_for_new_span(
+                subscriber_id,
+                &Attributes::new_root(&META, &values),
+                id,
+                None,
+            );
+        }
+        assert!(buckets.count_ones() >= 6);
+        for id in ids {
+            let key = (subscriber_id, id.clone());
+            assert!(shard(SpanLookup::new(&key)).read().contains_key(&key));
+            assert!(release_span(subscriber_id, &id));
+        }
+    }
+
+    #[test]
     fn registry_entries_stay_inline_and_retain_each_parent_once() {
         let subscriber = new_subscriber();
         let parent = Id::from_u64(1);
@@ -300,8 +386,6 @@ mod tests {
     fn backends_isolate_identical_keys_fields_correlation_and_lifetimes() {
         let subscriber = new_subscriber();
         let subscriber_id = subscriber.subscriber_id;
-        let parent = Id::from_u64(1);
-        let child = Id::from_u64(2);
         let values = META.fields().value_set(&[]);
         let metadata = tracing::callsite! {
             name: "isolated backend fields",
@@ -311,13 +395,12 @@ mod tests {
             fields: value
         }
         .metadata();
+        let parent = subscriber.new_span(&Attributes::new_root(&META, &values));
+        let child = subscriber.new_span(&Attributes::new_root(
+            metadata,
+            &tracing::valueset!(metadata.fields(), value = 1u64),
+        ));
         create_span_data_for_new_span(
-            subscriber_id,
-            &Attributes::new_root(&META, &values),
-            &parent,
-            None,
-        );
-        standalone::create_span_data_for_new_span(
             subscriber_id,
             &Attributes::new_root(&META, &values),
             &parent,
@@ -332,15 +415,6 @@ mod tests {
             ),
             &child,
             Some(&parent),
-        );
-        standalone::create_span_data_for_new_span(
-            subscriber_id,
-            &Attributes::new_root(
-                metadata,
-                &tracing::valueset!(metadata.fields(), value = 1u64),
-            ),
-            &child,
-            None,
         );
         subscriber.enter(&child);
         let writer = RecordingWriter::default();

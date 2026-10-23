@@ -61,8 +61,9 @@ lookups do not acquire a lock.
 Hashing uses explicitly seeded `ahash::RandomState` values. The dependency's
 standard-library and runtime-RNG default features are disabled.
 
-The standalone subscriber indexes stable, cache-line-aligned entries with
-independent payload locks and caches owning handles in entered-span stacks.
+The standalone subscriber stores stable, cache-line-aligned entries in a
+generational slab with independent payload locks, and caches owning handles
+in entered-span stacks.
 Re-entry, recording, nonfinal entered-reference release, and stop
 emission can use those handles without hashing or acquiring a shard lock.
 Current-span queries and contextual event correlation read immutable cached
@@ -87,15 +88,26 @@ integrations have separate, statically selected storage and lifetime paths,
 without per-access storage-kind dispatch. Both APIs remain available together
 when `std` is enabled.
 
-Standalone span IDs are allocated in thread/fiber-local batches of up to 1024
-from the same global counter used for subscriber IDs. Batches share the existing
-span-stack TLS slot; IDs remain globally unique and nonzero, but unused IDs in
-a batch are not recycled at thread/fiber exit.
+Standalone span IDs encode a 5-bit shard, 27-bit slot, and 32-bit generation.
+Indexed lookup checks both the generation and subscriber identity without
+hashing. Freed slots are recycled with a new generation; exhausted generations
+retire their slots instead of wrapping, so stale IDs never address a new span.
+Each shard supports up to 2^27 slots and reports exhaustion rather than reusing
+an ID. Each thread/fiber selects a preferred shard on its first span. This
+replaces per-thread batches of globally allocated span IDs; subscriber IDs
+still use a checked global counter.
 
-Each storage backend uses 32 independently locked, cache-line-aligned shards
-selected by a hash of the full `(subscriber_id, span_id)` key. Each lookup
-hashes the key once and reuses that hash for map access. Shard selection uses
-middle hash bits, leaving the map's bucket and control-byte bits independent.
+Entered-span state and the lazily initialized native event builder share one
+TLS allocation. Standalone enter, exit, and contextual event emission pass the
+already accessed event context to the writer, avoiding a second native TLS
+lookup. The entered stack and builder are borrowed independently; user
+formatting runs without a borrowed entered stack.
+
+Each storage backend uses 32 independently locked, cache-line-aligned shards.
+Standalone IDs select their shard and slot directly. The registry backend
+hashes the full `(subscriber_id, span_id)` key once per lookup and reuses that
+hash for map access. Its shard selection uses middle hash bits, leaving the
+map's bucket and control-byte bits independent.
 Parent/child creation locks distinct shards in ascending index order;
 cascading close operations release each shard before accessing the parent.
 

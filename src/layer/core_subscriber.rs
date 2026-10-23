@@ -4,19 +4,22 @@ use core::{
     sync::atomic::{AtomicU64, Ordering},
 };
 
-use crate::{layer::common, native::ProviderTraits, statics::get_event_metadata};
+use crate::{
+    layer::common,
+    native::{ContextWriter, EventContext, ProviderTraits},
+    statics::get_event_metadata,
+};
 
 use super::*;
 
 static NEXT_ID: AtomicU64 = AtomicU64::new(1);
-const ID_BATCH_SIZE: u64 = 1024;
 
 #[cold]
 fn reserve_ids(counter: &AtomicU64, count: u64) -> (u64, u64) {
     let mut id = counter.load(Ordering::Relaxed);
     loop {
         let end = id.saturating_add(count);
-        assert!(end > id, "Span and subscriber IDs exhausted");
+        assert!(end > id, "Subscriber IDs exhausted");
         match counter.compare_exchange_weak(id, end, Ordering::Relaxed, Ordering::Relaxed) {
             Ok(_) => return (id, end),
             Err(current) => id = current,
@@ -28,26 +31,9 @@ pub(crate) fn next_id() -> u64 {
     reserve_ids(&NEXT_ID, 1).0
 }
 
-struct IdBatch {
-    next: u64,
-    end: u64,
-}
-
-impl IdBatch {
-    #[inline]
-    fn next(&mut self, counter: &AtomicU64) -> u64 {
-        if self.next == self.end {
-            (self.next, self.end) = reserve_ids(counter, ID_BATCH_SIZE);
-        }
-        let id = self.next;
-        self.next += 1;
-        id
-    }
-}
-
 struct ThreadState {
     spans: Vec<common::SpanHandle>,
-    ids: IdBatch,
+    shard: Option<usize>,
 }
 
 impl ThreadState {
@@ -61,17 +47,35 @@ impl ThreadState {
 }
 
 crate::tls::thread_local! {
-    static THREAD_STATE: RefCell<ThreadState> = const {
-        RefCell::new(ThreadState {
-            spans: Vec::new(),
-            ids: IdBatch { next: 0, end: 0 },
-        })
+    static THREAD_STATE: LocalState = const {
+        LocalState {
+            entered: RefCell::new(ThreadState {
+                spans: Vec::new(),
+                shard: None,
+            }),
+            context: EventContext::new(),
+        }
     };
+}
+
+struct LocalState {
+    entered: RefCell<ThreadState>,
+    context: EventContext,
+}
+
+#[cfg(any(windows, target_os = "linux"))]
+pub(crate) fn with_event_context<R>(f: impl FnOnce(&EventContext) -> R) -> R {
+    THREAD_STATE.with(|state| f(&state.context))
 }
 
 impl<OutMode: OutputMode> _EtwTracingSubscriber<OutMode> {
     fn current_span_context(&self) -> Option<common::SpanContext> {
-        THREAD_STATE.with_borrow(|state| state.current_span_context(self.subscriber_id))
+        THREAD_STATE.with(|state| {
+            state
+                .entered
+                .borrow()
+                .current_span_context(self.subscriber_id)
+        })
     }
 
     fn with_entered_span<R>(
@@ -80,7 +84,7 @@ impl<OutMode: OutputMode> _EtwTracingSubscriber<OutMode> {
         f: impl FnOnce(&common::SpanHandle) -> R,
     ) -> Option<R> {
         crate::tls::try_with(&THREAD_STATE, |state| {
-            let state = state.try_borrow().ok()?;
+            let state = state.entered.try_borrow().ok()?;
             state
                 .spans
                 .iter()
@@ -126,8 +130,9 @@ where
     }
 
     fn new_span(&self, attrs: &tracing_core::span::Attributes<'_>) -> tracing_core::span::Id {
-        let (id, parent) = THREAD_STATE.with_borrow_mut(|state| {
-            let id = tracing::span::Id::from_u64(state.ids.next(&NEXT_ID));
+        let (shard, parent) = THREAD_STATE.with(|state| {
+            let mut state = state.entered.borrow_mut();
+            let shard = *state.shard.get_or_insert_with(common::next_span_shard);
             let parent = if attrs.is_contextual() {
                 state
                     .current_span_context(self.subscriber_id)
@@ -135,12 +140,10 @@ where
             } else {
                 attrs.parent().cloned()
             };
-            (id, parent)
+            (shard, parent)
         });
 
-        common::create_span_data_for_new_span(self.subscriber_id, attrs, &id, parent.as_ref());
-
-        id
+        common::create_span_data_for_new_span(self.subscriber_id, attrs, parent.as_ref(), shard)
     }
 
     fn clone_span(&self, id: &tracing_core::span::Id) -> tracing_core::span::Id {
@@ -186,31 +189,49 @@ where
             (event.metadata().name(), self.default_keyword, 0)
         };
 
-        let span = if event.is_contextual() {
-            self.current_span_context()
-                .map(|context| common::EventSpan::Cached(context.ids))
-        } else {
-            event.parent().map(|id| {
-                self.with_entered_span(id, |handle| common::EventSpan::Cached(handle.context().ids))
-                    .unwrap_or(common::EventSpan::Id(id))
-            })
-        };
+        THREAD_STATE.with(|state| {
+            let span = if event.is_contextual() {
+                state
+                    .entered
+                    .borrow()
+                    .current_span_context(self.subscriber_id)
+                    .map(|context| common::EventSpan::Cached(context.ids))
+            } else {
+                event.parent().map(|id| {
+                    state
+                        .entered
+                        .try_borrow()
+                        .ok()
+                        .and_then(|entered| {
+                            entered
+                                .spans
+                                .iter()
+                                .rev()
+                                .find(|span| span.matches(self.subscriber_id, id))
+                                .map(|handle| common::EventSpan::Cached(handle.context().ids))
+                        })
+                        .unwrap_or(common::EventSpan::Id(id))
+                })
+            };
 
-        common::write_event(
-            self.subscriber_id,
-            self.provider.as_ref(),
-            event,
-            name,
-            keyword,
-            tag,
-            span,
-            None,
-        )
+            let writer = ContextWriter::new(self.provider.as_ref(), &state.context);
+            common::write_event(
+                self.subscriber_id,
+                Pin::new(&writer),
+                event,
+                name,
+                keyword,
+                tag,
+                span,
+                None,
+            )
+        })
     }
 
     fn enter(&self, id: &tracing_core::span::Id) {
-        THREAD_STATE.with(|state| {
-            let mut state = state.borrow_mut();
+        THREAD_STATE.with(|local| {
+            let writer = ContextWriter::new(self.provider.as_ref(), &local.context);
+            let mut state = local.entered.borrow_mut();
             // Initialize TLS and reserve capacity before retaining an entry.
             state.spans.reserve(1);
             let cached = state
@@ -226,7 +247,7 @@ where
             if let Some(handle) = cached {
                 common::enter_span_cached(
                     handle,
-                    self.provider.as_ref(),
+                    Pin::new(&writer),
                     self.default_keyword,
                     0,
                     None,
@@ -236,7 +257,7 @@ where
                 common::enter_span_retained(
                     self.subscriber_id,
                     id,
-                    self.provider.as_ref(),
+                    Pin::new(&writer),
                     self.default_keyword,
                     0,
                     None,
@@ -247,24 +268,22 @@ where
     }
 
     fn exit(&self, id: &tracing_core::span::Id) {
-        let entered = THREAD_STATE.with_borrow_mut(|state| {
-            let index = state
-                .spans
-                .iter()
-                .rposition(|span| span.matches(self.subscriber_id, id))
-                .expect("Exit of a span that is not entered on this thread");
-            state.spans.remove(index)
+        THREAD_STATE.with(|local| {
+            let entered = {
+                let mut state = local.entered.borrow_mut();
+                let index = state
+                    .spans
+                    .iter()
+                    .rposition(|span| span.matches(self.subscriber_id, id))
+                    .expect("Exit of a span that is not entered on this thread");
+                state.spans.remove(index)
+            };
+            // Spans don't have callsites to store keyword/tag metadata on,
+            // so we must use the defaults.
+            let writer = ContextWriter::new(self.provider.as_ref(), &local.context);
+            common::exit_span_cached(&entered, Pin::new(&writer), self.default_keyword, 0, None);
+            drop(entered);
         });
-        // Spans don't have callsites to store keyword/tag metadata on,
-        // so we must use the defaults.
-        common::exit_span_cached(
-            &entered,
-            self.provider.as_ref(),
-            self.default_keyword,
-            0,
-            None,
-        );
-        drop(entered);
     }
 }
 
@@ -273,43 +292,160 @@ mod tests {
     use super::*;
     use tracing_core::{Subscriber, callsite::Callsite};
 
+    #[cfg(all(not(feature = "std"), any(windows, target_os = "linux")))]
     #[test]
-    fn concurrent_id_batches_do_not_overlap_single_id_reservations() {
-        let counter = AtomicU64::new(1);
-        let mut ids = alloc::vec![reserve_ids(&counter, 1).0];
+    fn native_span_emission_uses_one_tls_lookup_per_operation() {
+        fn exercise<Mode: OutputMode + 'static>(subscriber: _EtwTracingSubscriber<Mode>)
+        where
+            crate::native::Provider<Mode>: crate::native::EventWriter<Mode>,
+        {
+            let metadata = tracing::callsite! {
+                name: "single TLS lookup",
+                kind: tracing::metadata::Kind::SPAN,
+                target: module_path!(),
+                level: tracing::Level::INFO,
+                fields: value
+            }
+            .metadata();
+            let id = subscriber.new_span(&tracing::span::Attributes::new_root(
+                metadata,
+                &tracing::valueset!(metadata.fields(), value = 1u64),
+            ));
+            let check = |operation: &dyn Fn()| {
+                let before = crate::tls::access_count();
+                operation();
+                assert_eq!(crate::tls::access_count() - before, 1);
+            };
+            check(&|| subscriber.enter(&id));
+            check(&|| subscriber.enter(&id));
+            check(&|| {
+                subscriber.event(&tracing::Event::new(
+                    metadata,
+                    &tracing::valueset!(metadata.fields(), value = 2u64),
+                ))
+            });
+            check(&|| {
+                subscriber.event(&tracing::Event::new_child_of(
+                    Some(id.clone()),
+                    metadata,
+                    &tracing::valueset!(metadata.fields(), value = 2u64),
+                ))
+            });
+            check(&|| subscriber.exit(&id));
+            check(&|| subscriber.exit(&id));
+            assert!(subscriber.try_close(id));
+        }
+        exercise(
+            crate::LayerBuilder::new("SingleTlsLookup")
+                .build_subscriber()
+                .unwrap(),
+        );
+        exercise(
+            crate::LayerBuilder::new_common_schema_events("SingleTlsLookupCS")
+                .build_subscriber()
+                .unwrap(),
+        );
+    }
+
+    #[test]
+    fn event_formatting_can_query_and_record_the_current_span() {
+        let subscriber = crate::LayerBuilder::new("ReentrantContextRead")
+            .build_subscriber()
+            .unwrap();
+        let metadata = tracing::callsite! {
+            name: "formatting context",
+            kind: tracing::metadata::Kind::SPAN,
+            target: module_path!(),
+            level: tracing::Level::INFO,
+            fields: value
+        }
+        .metadata();
+        let id = subscriber.new_span(&tracing::span::Attributes::new_root(
+            metadata,
+            &tracing::valueset!(metadata.fields(), value = 1u64),
+        ));
+        subscriber.enter(&id);
+        struct Probe<'a> {
+            subscriber: &'a _EtwTracingSubscriber<crate::NormalOutput>,
+            id: &'a tracing::span::Id,
+        }
+        impl core::fmt::Debug for Probe<'_> {
+            fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+                let current = self.subscriber.current_span();
+                assert_eq!(current.id(), Some(self.id));
+                let metadata = current.metadata().unwrap();
+                self.subscriber.record(
+                    self.id,
+                    &tracing::span::Record::new(&tracing::valueset!(
+                        metadata.fields(),
+                        value = 7u64
+                    )),
+                );
+                f.write_str("context available")
+            }
+        }
+        let probe = Probe {
+            subscriber: &subscriber,
+            id: &id,
+        };
+        subscriber.event(&tracing::Event::new(
+            metadata,
+            &tracing::valueset!(metadata.fields(), value = ?probe),
+        ));
+        subscriber.record(
+            &id,
+            &tracing::span::Record::new(&tracing::valueset!(metadata.fields(), value = ?probe)),
+        );
+        subscriber.exit(&id);
+        assert!(subscriber.try_close(id));
+    }
+
+    #[test]
+    fn concurrent_recycled_span_ids_do_not_overlap() {
+        let subscriber = crate::LayerBuilder::new("ConcurrentSlabIds")
+            .build_subscriber()
+            .unwrap();
+        let metadata = tracing::callsite! {
+            name: "concurrent slot reuse",
+            kind: tracing::metadata::Kind::SPAN,
+            target: module_path!(),
+            level: tracing::Level::INFO,
+            fields:
+        }
+        .metadata();
+        let mut ids = Vec::new();
         std::thread::scope(|scope| {
             let mut workers = Vec::new();
             for _ in 0..4 {
-                let counter = &counter;
+                let subscriber = &subscriber;
                 workers.push(scope.spawn(move || {
-                    let mut batch = IdBatch { next: 0, end: 0 };
-                    (0..3 * ID_BATCH_SIZE)
-                        .map(|_| batch.next(counter))
+                    let values = metadata.fields().value_set(&[]);
+                    (0..128)
+                        .map(|_| {
+                            let id = subscriber
+                                .new_span(&tracing::span::Attributes::new_root(metadata, &values));
+                            assert!(subscriber.try_close(id.clone()));
+                            id.into_u64()
+                        })
                         .collect::<Vec<_>>()
                 }));
             }
-            ids.push(reserve_ids(&counter, 1).0);
             for worker in workers {
                 ids.extend(worker.join().unwrap());
             }
         });
         ids.sort_unstable();
-        assert_eq!(
-            ids,
-            (1..counter.load(Ordering::Relaxed)).collect::<Vec<_>>()
-        );
+        ids.dedup();
+        assert_eq!(ids.len(), 4 * 128);
     }
 
     #[test]
-    fn final_id_batch_does_not_wrap_or_reuse_ids() {
-        let counter = AtomicU64::new(u64::MAX - 3);
-        let mut batch = IdBatch { next: 0, end: 0 };
-        assert_eq!(batch.next(&counter), u64::MAX - 3);
-        assert_eq!(batch.next(&counter), u64::MAX - 2);
-        assert_eq!(batch.next(&counter), u64::MAX - 1);
+    fn subscriber_id_reservations_do_not_wrap() {
+        let counter = AtomicU64::new(u64::MAX - 1);
+        assert_eq!(reserve_ids(&counter, 1).0, u64::MAX - 1);
         assert_eq!(counter.load(Ordering::Relaxed), u64::MAX);
         let result =
-            std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| batch.next(&counter)));
+            std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| reserve_ids(&counter, 1)));
         assert!(result.is_err());
         assert_eq!(counter.load(Ordering::Relaxed), u64::MAX);
     }
@@ -343,7 +479,8 @@ mod tests {
         .metadata();
         let values = metadata.fields().value_set(&[]);
         let id = subscriber.new_span(&tracing_core::span::Attributes::new_root(metadata, &values));
-        let result = THREAD_STATE.with_borrow_mut(|_| {
+        let result = THREAD_STATE.with(|state| {
+            let _entered = state.entered.borrow_mut();
             std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| subscriber.enter(&id)))
         });
         assert!(result.is_err());
@@ -366,7 +503,8 @@ mod tests {
         .metadata();
         let values = metadata.fields().value_set(&[]);
         let id = subscriber.new_span(&tracing_core::span::Attributes::new_root(metadata, &values));
-        THREAD_STATE.with_borrow_mut(|_| {
+        THREAD_STATE.with(|state| {
+            let _entered = state.entered.borrow_mut();
             let cloned = subscriber.clone_span(&id);
             subscriber.record(&id, &tracing_core::span::Record::new(&values));
             assert!(!subscriber.try_close(cloned));

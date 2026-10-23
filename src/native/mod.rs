@@ -47,6 +47,162 @@ use core::pin::Pin;
 extern crate alloc;
 use alloc::sync::Arc;
 
+#[cfg(windows)]
+type LocalEventBuilder = tracelogging_dynamic::EventBuilder;
+#[cfg(target_os = "linux")]
+type LocalEventBuilder = eventheader_dynamic::EventBuilder;
+#[doc(hidden)]
+pub struct EventContext {
+    #[cfg(any(windows, target_os = "linux"))]
+    builder: core::cell::OnceCell<core::cell::RefCell<LocalEventBuilder>>,
+}
+
+impl EventContext {
+    pub(crate) const fn new() -> Self {
+        Self {
+            #[cfg(any(windows, target_os = "linux"))]
+            builder: core::cell::OnceCell::new(),
+        }
+    }
+
+    #[cfg(any(windows, target_os = "linux"))]
+    pub(crate) fn with_builder<R>(
+        &self,
+        f: impl FnOnce(core::cell::RefMut<'_, LocalEventBuilder>) -> R,
+    ) -> R {
+        f(self
+            .builder
+            .get_or_init(|| core::cell::RefCell::new(LocalEventBuilder::new()))
+            .borrow_mut())
+    }
+}
+
+pub(crate) struct ContextWriter<'a, W> {
+    writer: Pin<&'a W>,
+    context: &'a EventContext,
+}
+
+impl<'a, W> ContextWriter<'a, W> {
+    pub(crate) fn new(writer: Pin<&'a W>, context: &'a EventContext) -> Self {
+        Self { writer, context }
+    }
+}
+
+impl<W: EventWriter<Mode>, Mode: OutputMode> EventWriter<Mode> for ContextWriter<'_, W> {
+    fn span_start(
+        self: Pin<&Self>,
+        data: crate::layer::common::SpanRef<'_>,
+        keyword: u64,
+        event_tag: u32,
+    ) {
+        self.writer
+            .span_start_in_context(data, keyword, event_tag, self.context);
+    }
+
+    fn span_stop(
+        self: Pin<&Self>,
+        times: (time::CivilTime, time::CivilTime),
+        data: crate::layer::common::SpanRef<'_>,
+        keyword: u64,
+        event_tag: u32,
+    ) {
+        self.writer
+            .span_stop_in_context(times, data, keyword, event_tag, self.context);
+    }
+
+    fn write_record(
+        self: Pin<&Self>,
+        timestamp: time::CivilTime,
+        current_span: u64,
+        parent_span: u64,
+        event_name: &str,
+        level: &tracing_core::Level,
+        keyword: u64,
+        event_tag: u32,
+        event: &tracing::Event<'_>,
+        span_strings: Option<SpanStrings>,
+    ) {
+        self.writer.write_record_in_context(
+            timestamp,
+            current_span,
+            parent_span,
+            event_name,
+            level,
+            keyword,
+            event_tag,
+            event,
+            span_strings,
+            self.context,
+        );
+    }
+}
+
+#[cfg(any(windows, target_os = "linux"))]
+macro_rules! delegate_event_writer {
+    ($mode:ty, $emit_start:literal) => {
+        fn span_start(
+            self: core::pin::Pin<&Self>,
+            data: crate::layer::common::SpanRef<'_>,
+            keyword: u64,
+            event_tag: u32,
+        ) {
+            if $emit_start {
+                crate::layer::core_subscriber::with_event_context(|context| {
+                    <Self as crate::native::EventWriter<$mode>>::span_start_in_context(
+                        self, data, keyword, event_tag, context,
+                    )
+                });
+            }
+        }
+        fn span_stop(
+            self: core::pin::Pin<&Self>,
+            times: (
+                crate::native::time::CivilTime,
+                crate::native::time::CivilTime,
+            ),
+            data: crate::layer::common::SpanRef<'_>,
+            keyword: u64,
+            event_tag: u32,
+        ) {
+            crate::layer::core_subscriber::with_event_context(|context| {
+                <Self as crate::native::EventWriter<$mode>>::span_stop_in_context(
+                    self, times, data, keyword, event_tag, context,
+                )
+            });
+        }
+        fn write_record(
+            self: core::pin::Pin<&Self>,
+            timestamp: crate::native::time::CivilTime,
+            current_span: u64,
+            parent_span: u64,
+            event_name: &str,
+            level: &tracing_core::Level,
+            keyword: u64,
+            event_tag: u32,
+            event: &tracing::Event<'_>,
+            span_strings: Option<crate::layer::common::SpanStrings>,
+        ) {
+            crate::layer::core_subscriber::with_event_context(|context| {
+                <Self as crate::native::EventWriter<$mode>>::write_record_in_context(
+                    self,
+                    timestamp,
+                    current_span,
+                    parent_span,
+                    event_name,
+                    level,
+                    keyword,
+                    event_tag,
+                    event,
+                    span_strings,
+                    context,
+                )
+            });
+        }
+    };
+}
+#[cfg(any(windows, target_os = "linux"))]
+pub(crate) use delegate_event_writer;
+
 /// A platform-independent GUID type.
 ///
 /// Supports conversion from `u128` and platform native GUID types
@@ -167,6 +323,54 @@ pub trait ProviderTraits {
 
 #[doc(hidden)]
 pub trait EventWriter<OutMode: OutputMode> {
+    fn span_start_in_context(
+        self: Pin<&Self>,
+        data: crate::layer::common::SpanRef<'_>,
+        keyword: u64,
+        event_tag: u32,
+        _context: &EventContext,
+    ) {
+        self.span_start(data, keyword, event_tag);
+    }
+
+    fn span_stop_in_context(
+        self: Pin<&Self>,
+        times: (time::CivilTime, time::CivilTime),
+        data: crate::layer::common::SpanRef<'_>,
+        keyword: u64,
+        event_tag: u32,
+        _context: &EventContext,
+    ) {
+        self.span_stop(times, data, keyword, event_tag);
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn write_record_in_context(
+        self: Pin<&Self>,
+        timestamp: time::CivilTime,
+        current_span: u64,
+        parent_span: u64,
+        event_name: &str,
+        level: &tracing_core::Level,
+        keyword: u64,
+        event_tag: u32,
+        event: &tracing::Event<'_>,
+        span_strings: Option<SpanStrings>,
+        _context: &EventContext,
+    ) {
+        self.write_record(
+            timestamp,
+            current_span,
+            parent_span,
+            event_name,
+            level,
+            keyword,
+            event_tag,
+            event,
+            span_strings,
+        );
+    }
+
     fn span_start(
         self: Pin<&Self>,
         data: crate::layer::common::SpanRef,

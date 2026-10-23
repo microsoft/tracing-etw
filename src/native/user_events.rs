@@ -1,4 +1,4 @@
-use core::{cell::RefCell, marker::PhantomData, ops::DerefMut, pin::Pin};
+use core::{marker::PhantomData, ops::DerefMut, pin::Pin};
 extern crate alloc;
 use alloc::{
     borrow::Cow,
@@ -35,8 +35,6 @@ unsafe extern "C" {
 #[unsafe(link_section = "_etw_kw")]
 #[used]
 static mut ETW_META_PTR: *const crate::_details::EventMetadata = core::ptr::null();
-
-crate::tls::thread_local! {static EBW: RefCell<EventBuilder>  = RefCell::new(EventBuilder::new());}
 
 impl AddFieldAndValue for &'_ mut eventheader_dynamic::EventBuilder {
     fn add_field_value(&mut self, fv: &FieldAndValue) {
@@ -190,11 +188,14 @@ impl<OutMode: OutputMode> Provider<OutMode> {
 }
 
 impl<Mode: OutputMode> super::EventWriter<NormalOutput> for Provider<Mode> {
-    fn span_start(
+    super::delegate_event_writer!(NormalOutput, true);
+
+    fn span_start_in_context(
         self: Pin<&Self>,
         data: crate::layer::common::SpanRef,
         keyword: u64,
         event_tag: u32,
+        context: &super::EventContext,
     ) {
         let span_name = data.name();
 
@@ -204,7 +205,7 @@ impl<Mode: OutputMode> super::EventWriter<NormalOutput> for Provider<Mode> {
             self.register_set(Self::map_level(&data.level()), keyword)
         };
 
-        EBW.with_borrow_mut(|mut eb| {
+        context.with_builder(|mut eb| {
             eb.reset(span_name, event_tag as u16);
             eb.opcode(Opcode::ActivityStart);
 
@@ -241,12 +242,13 @@ impl<Mode: OutputMode> super::EventWriter<NormalOutput> for Provider<Mode> {
         });
     }
 
-    fn span_stop(
+    fn span_stop_in_context(
         self: Pin<&Self>,
         start_stop_times: (time::CivilTime, time::CivilTime),
         data: crate::layer::common::SpanRef,
         keyword: u64,
         event_tag: u32,
+        context: &super::EventContext,
     ) {
         let span_name = data.name();
 
@@ -256,7 +258,7 @@ impl<Mode: OutputMode> super::EventWriter<NormalOutput> for Provider<Mode> {
             self.register_set(Self::map_level(&data.level()), keyword)
         };
 
-        EBW.with_borrow_mut(|mut eb| {
+        context.with_builder(|mut eb| {
             eb.reset(span_name, event_tag as u16);
             eb.opcode(Opcode::ActivityStop);
 
@@ -293,7 +295,7 @@ impl<Mode: OutputMode> super::EventWriter<NormalOutput> for Provider<Mode> {
         });
     }
 
-    fn write_record(
+    fn write_record_in_context(
         self: Pin<&Self>,
         timestamp: time::CivilTime,
         current_span: u64,
@@ -304,6 +306,7 @@ impl<Mode: OutputMode> super::EventWriter<NormalOutput> for Provider<Mode> {
         event_tag: u32,
         event: &tracing::Event<'_>,
         _span_strings: Option<SpanStrings>,
+        context: &super::EventContext,
     ) {
         let es = if let Some(es) = self.find_set(Self::map_level(level), keyword) {
             es
@@ -330,7 +333,7 @@ impl<Mode: OutputMode> super::EventWriter<NormalOutput> for Provider<Mode> {
             0
         };
 
-        EBW.with_borrow_mut(|mut eb| {
+        context.with_builder(|mut eb| {
             eb.reset(event_name, event_tag as u16);
             eb.opcode(Opcode::Info);
 
@@ -388,20 +391,24 @@ impl AddFieldAndValue for CommonSchemaPartCBuilder<'_> {
 }
 
 impl<Mode: OutputMode> super::EventWriter<CommonSchemaOutput> for Provider<Mode> {
-    fn span_start(
+    super::delegate_event_writer!(CommonSchemaOutput, false);
+
+    fn span_start_in_context(
         self: Pin<&Self>,
         _data: crate::layer::common::SpanRef,
         _keyword: u64,
         _event_tag: u32,
+        _context: &super::EventContext,
     ) {
     }
 
-    fn span_stop(
+    fn span_stop_in_context(
         self: Pin<&Self>,
         start_stop_times: (time::CivilTime, time::CivilTime),
         data: crate::layer::common::SpanRef,
         keyword: u64,
         event_tag: u32,
+        context: &super::EventContext,
     ) {
         let es = if let Some(es) = self.find_set(Self::map_level(&data.level()), keyword) {
             es
@@ -409,7 +416,7 @@ impl<Mode: OutputMode> super::EventWriter<CommonSchemaOutput> for Provider<Mode>
             self.register_set(Self::map_level(&data.level()), keyword)
         };
 
-        EBW.with_borrow_mut(|mut eb| {
+        context.with_builder(|mut eb| {
             eb.reset(data.name(), event_tag as u16);
             eb.opcode(Opcode::Info);
 
@@ -496,7 +503,7 @@ impl<Mode: OutputMode> super::EventWriter<CommonSchemaOutput> for Provider<Mode>
         });
     }
 
-    fn write_record(
+    fn write_record_in_context(
         self: Pin<&Self>,
         timestamp: time::CivilTime,
         _current_span: u64,
@@ -507,6 +514,7 @@ impl<Mode: OutputMode> super::EventWriter<CommonSchemaOutput> for Provider<Mode>
         event_tag: u32,
         event: &tracing::Event<'_>,
         span_strings: Option<SpanStrings>,
+        context: &super::EventContext,
     ) {
         let es = if let Some(es) = self.find_set(Self::map_level(level), keyword) {
             es
@@ -514,7 +522,7 @@ impl<Mode: OutputMode> super::EventWriter<CommonSchemaOutput> for Provider<Mode>
             self.register_set(Self::map_level(level), keyword)
         };
 
-        EBW.with_borrow_mut(|mut eb| {
+        context.with_builder(|mut eb| {
             eb.reset(event_name, event_tag as u16);
             eb.opcode(Opcode::Info);
 

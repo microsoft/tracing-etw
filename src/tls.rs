@@ -10,6 +10,9 @@ mod native;
 #[cfg(all(not(feature = "std"), any(windows, target_os = "linux")))]
 pub(crate) use native::LocalKey;
 
+#[cfg(all(test, not(feature = "std"), any(windows, target_os = "linux")))]
+pub(crate) use native::access_count;
+
 pub(crate) fn try_with<T: 'static, R>(
     key: &'static LocalKey<T>,
     f: impl FnOnce(&T) -> R,

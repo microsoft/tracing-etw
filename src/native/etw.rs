@@ -1,4 +1,4 @@
-use core::{cell::RefCell, marker::PhantomData, ops::DerefMut, pin::Pin};
+use core::{marker::PhantomData, ops::DerefMut, pin::Pin};
 extern crate alloc;
 use alloc::{string::String, sync::Arc};
 
@@ -28,8 +28,6 @@ pub(crate) static mut _stop__etw_kw: usize = 0;
 /// This type is platform-specific. It maps to [`tracelogging::Guid`] on Windows
 /// and [`Cow<'static, str>`](alloc::borrow::Cow) on Linux.
 pub type ProviderGroupId = crate::native::native_guid;
-
-crate::tls::thread_local! {static EBW: RefCell<EventBuilder>  = RefCell::new(EventBuilder::new());}
 
 struct Win32SystemTime {
     st: [u16; 8],
@@ -180,13 +178,16 @@ impl<Mode: OutputMode> Provider<Mode> {
 }
 
 impl<Mode: OutputMode> super::EventWriter<NormalOutput> for Provider<Mode> {
-    fn span_start(
+    super::delegate_event_writer!(NormalOutput, true);
+
+    fn span_start_in_context(
         self: Pin<&Self>,
         data: crate::layer::common::SpanRef,
         keyword: u64,
         event_tag: u32,
+        context: &super::EventContext,
     ) {
-        EBW.with_borrow_mut(|mut eb| {
+        context.with_builder(|mut eb| {
             eb.reset(
                 data.name(),
                 Self::map_level(&data.level()),
@@ -230,14 +231,15 @@ impl<Mode: OutputMode> super::EventWriter<NormalOutput> for Provider<Mode> {
         });
     }
 
-    fn span_stop(
+    fn span_stop_in_context(
         self: Pin<&Self>,
         start_stop_times: (time::CivilTime, time::CivilTime),
         data: crate::layer::common::SpanRef,
         keyword: u64,
         event_tag: u32,
+        context: &super::EventContext,
     ) {
-        EBW.with_borrow_mut(|mut eb| {
+        context.with_builder(|mut eb| {
             eb.reset(
                 data.name(),
                 Self::map_level(&data.level()),
@@ -281,7 +283,7 @@ impl<Mode: OutputMode> super::EventWriter<NormalOutput> for Provider<Mode> {
         });
     }
 
-    fn write_record(
+    fn write_record_in_context(
         self: Pin<&Self>,
         timestamp: time::CivilTime,
         current_span: u64,
@@ -292,6 +294,7 @@ impl<Mode: OutputMode> super::EventWriter<NormalOutput> for Provider<Mode> {
         event_tag: u32,
         event: &tracing::Event<'_>,
         _span_strings: Option<SpanStrings>,
+        context: &super::EventContext,
     ) {
         let activity_seed = *GLOBAL_ACTIVITY_SEED;
         let mut activity_id: [u8; 16] = activity_seed;
@@ -312,7 +315,7 @@ impl<Mode: OutputMode> super::EventWriter<NormalOutput> for Provider<Mode> {
             0
         };
 
-        EBW.with_borrow_mut(|mut eb| {
+        context.with_builder(|mut eb| {
             eb.reset(event_name, Self::map_level(level), keyword, event_tag);
             eb.opcode(Opcode::Info);
 
@@ -376,22 +379,26 @@ impl AddFieldAndValue for CommonSchemaPartCBuilder<'_> {
 }
 
 impl<Mode: OutputMode> super::EventWriter<CommonSchemaOutput> for Provider<Mode> {
-    fn span_start(
+    super::delegate_event_writer!(CommonSchemaOutput, false);
+
+    fn span_start_in_context(
         self: Pin<&Self>,
         _data: crate::layer::common::SpanRef,
         _keyword: u64,
         _event_tag: u32,
+        _context: &super::EventContext,
     ) {
     }
 
-    fn span_stop(
+    fn span_stop_in_context(
         self: Pin<&Self>,
         start_stop_times: (time::CivilTime, time::CivilTime),
         data: crate::layer::common::SpanRef,
         keyword: u64,
         event_tag: u32,
+        context: &super::EventContext,
     ) {
-        EBW.with_borrow_mut(|mut eb| {
+        context.with_builder(|mut eb| {
             eb.reset(
                 data.name(),
                 Self::map_level(&data.level()),
@@ -473,7 +480,7 @@ impl<Mode: OutputMode> super::EventWriter<CommonSchemaOutput> for Provider<Mode>
         });
     }
 
-    fn write_record(
+    fn write_record_in_context(
         self: Pin<&Self>,
         timestamp: time::CivilTime,
         _current_span: u64,
@@ -484,8 +491,9 @@ impl<Mode: OutputMode> super::EventWriter<CommonSchemaOutput> for Provider<Mode>
         event_tag: u32,
         event: &tracing::Event<'_>,
         span_strings: Option<SpanStrings>,
+        context: &super::EventContext,
     ) {
-        EBW.with_borrow_mut(|mut eb| {
+        context.with_builder(|mut eb| {
             eb.reset(event_name, Self::map_level(level), keyword, event_tag);
             eb.opcode(Opcode::Info);
 

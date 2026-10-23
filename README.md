@@ -66,7 +66,14 @@ in entered-span stacks. Current-span queries and contextual event correlation
 therefore avoid the shared span map, as do events without a parent span.
 Recorded span values are formatted before acquiring the map lock; replaced
 values and removed span payloads are destroyed after releasing it. Span
-start/stop encoding still borrows the payload under the map lock.
+start/stop encoding still borrows the payload under its shard's lock.
+
+Span storage uses 32 independently locked, cache-line-aligned shards selected
+by a hash of the full `(subscriber_id, span_id)` key. Each lookup hashes the
+key once and reuses that hash for map access. Shard selection uses middle
+hash bits, leaving the map's bucket and control-byte bits independent.
+Parent/child creation locks distinct shards in ascending index order;
+cascading close operations release each shard before accessing the parent.
 
 Shared span storage and the Linux provider use blocking read/write locks with
 poisoning when `std` is enabled. Without `std`, Windows uses native `SRWLOCK`
@@ -111,6 +118,16 @@ the disabled-call fast path and do not imply that events were collected.
 Keep external collectors stopped for a collector-free comparison; collecting
 the `etw_bench` provider adds native ETW delivery costs. The
 `etw_bench_disabled` provider must remain disabled.
+
+The `unfiltered/4 threads/span+event` case runs four persistent workers against
+one shared subscriber. Each worker repeatedly creates a three-field span,
+enters and records it, emits a contextual three-field event, then exits and
+closes the span. Thread creation, dispatch setup, and per-thread warm-up are
+outside the measurement. Workers start each batch together; batch coordination
+is timed, but there is no per-operation synchronization in the harness.
+One Criterion iteration represents four span-plus-event operations, and
+throughput reports their aggregate rate. Run just this case by adding
+`"unfiltered/4 threads"` before the baseline arguments after `--`.
 
 Criterion and the benchmark harness use `std` in both runs; `no_std` refers
 to the library's feature configuration, native locks/TLS, and standalone

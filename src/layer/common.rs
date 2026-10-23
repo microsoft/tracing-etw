@@ -2,7 +2,7 @@ use core::{num::NonZeroU64, pin::Pin};
 extern crate alloc;
 use alloc::{boxed::Box, vec::Vec};
 
-use hashbrown::HashMap;
+use hashbrown::{HashMap, hash_map::RawEntryMut};
 
 use crate::{
     native::{EventWriter, OutputMode, time::Timestamp},
@@ -14,14 +14,90 @@ use crate::{
     },
 };
 
-// DOS resistance is not needed in this hash
-static SPAN_DATA: RwLock<HashMap<(u64, tracing::span::Id), SpanData, ahash::RandomState>> =
-    RwLock::new(HashMap::with_hasher(ahash::RandomState::with_seeds(
-        17_616_942_133_695_121_499,
-        9_565_839_503_509_016_163,
-        2_756_528_679_765_226_774,
-        228_784_672_216_536_063,
-    )));
+type SpanKey = (u64, tracing::span::Id);
+type SpanMap = HashMap<SpanKey, SpanData, ahash::RandomState>;
+type SpanEntry<'a> = RawEntryMut<'a, SpanKey, SpanData, ahash::RandomState>;
+
+const SPAN_SHARD_COUNT: usize = 32;
+// DOS resistance is not needed in this hash.
+const SPAN_HASHER: ahash::RandomState = ahash::RandomState::with_seeds(
+    17_616_942_133_695_121_499,
+    9_565_839_503_509_016_163,
+    2_756_528_679_765_226_774,
+    228_784_672_216_536_063,
+);
+
+#[repr(align(64))]
+struct SpanShard {
+    spans: RwLock<SpanMap>,
+}
+
+static SPAN_DATA: [SpanShard; SPAN_SHARD_COUNT] = [const {
+    SpanShard {
+        spans: RwLock::new(HashMap::with_hasher(SPAN_HASHER)),
+    }
+}; SPAN_SHARD_COUNT];
+
+#[derive(Clone, Copy)]
+struct SpanLookup<'a> {
+    key: &'a SpanKey,
+    hash: u64,
+}
+
+impl<'a> SpanLookup<'a> {
+    #[inline]
+    fn new(key: &'a SpanKey) -> Self {
+        Self {
+            key,
+            // Match hashbrown's BuildHasher path, including when rehashing.
+            hash: core::hash::BuildHasher::hash_one(&SPAN_HASHER, key),
+        }
+    }
+
+    #[inline]
+    fn shard_index(self) -> usize {
+        // Keep the low bucket bits and high control-byte bits independent.
+        (self.hash >> 32) as usize & (SPAN_SHARD_COUNT - 1)
+    }
+
+    #[inline]
+    fn shard(self) -> &'static RwLock<SpanMap> {
+        &SPAN_DATA[self.shard_index()].spans
+    }
+
+    #[inline]
+    fn get(self, spans: &SpanMap) -> Option<&SpanData> {
+        spans
+            .raw_entry()
+            .from_key_hashed_nocheck(self.hash, self.key)
+            .map(|(_, data)| data)
+    }
+
+    #[inline]
+    fn entry(self, spans: &mut SpanMap) -> SpanEntry<'_> {
+        spans
+            .raw_entry_mut()
+            .from_key_hashed_nocheck(self.hash, self.key)
+    }
+
+    #[inline]
+    fn get_mut(self, spans: &mut SpanMap) -> Option<&mut SpanData> {
+        match self.entry(spans) {
+            RawEntryMut::Occupied(entry) => Some(entry.into_mut()),
+            RawEntryMut::Vacant(_) => None,
+        }
+    }
+}
+
+#[cfg(test)]
+fn span_shard_index(key: &SpanKey) -> usize {
+    SpanLookup::new(key).shard_index()
+}
+
+#[cfg(test)]
+fn span_shard(key: &SpanKey) -> &'static RwLock<SpanMap> {
+    SpanLookup::new(key).shard()
+}
 
 #[derive(Clone, Copy)]
 pub(crate) struct SpanIds {
@@ -202,31 +278,74 @@ pub(crate) fn create_span_data_for_new_span(
         record: |name, mut value| update_span_value(&mut data.fields, name, &mut value),
     });
 
-    let mut spans = SPAN_DATA.write();
-    if let Some(existing) = spans.get_mut(&(subscriber_id, id.clone())) {
+    let key = (subscriber_id, id.clone());
+    let lookup = SpanLookup::new(&key);
+    let index = lookup.shard_index();
+    let parent_key = parent.map(|parent| (subscriber_id, parent.clone()));
+    let parent = parent_key.as_ref().map(SpanLookup::new);
+    let parent_index = parent.map(SpanLookup::shard_index);
+    // When two shards are needed, always acquire the lower index first.
+    let unused = match parent_index {
+        Some(parent_index) if parent_index < index => {
+            let mut parents = SPAN_DATA[parent_index].spans.write();
+            let mut spans = SPAN_DATA[index].spans.write();
+            insert_span_data(&mut spans, Some(&mut parents), lookup, data, parent)
+        }
+        Some(parent_index) if parent_index > index => {
+            let mut spans = SPAN_DATA[index].spans.write();
+            let mut parents = SPAN_DATA[parent_index].spans.write();
+            insert_span_data(&mut spans, Some(&mut parents), lookup, data, parent)
+        }
+        _ => {
+            let mut spans = SPAN_DATA[index].spans.write();
+            insert_span_data(&mut spans, None, lookup, data, parent)
+        }
+    };
+    // Duplicate layers' unused payloads must be dropped outside both locks.
+    drop(unused);
+}
+
+fn insert_span_data(
+    spans: &mut SpanMap,
+    parents: Option<&mut SpanMap>,
+    lookup: SpanLookup<'_>,
+    mut data: SpanData,
+    parent: Option<SpanLookup<'_>>,
+) -> Option<SpanData> {
+    if let Some(existing) = lookup.get_mut(spans) {
         // Multiple exporter layers can observe the same registry span.
         existing.ref_count = existing
             .ref_count
             .checked_add(1)
             .expect("Span reference count overflow");
-        return;
+        return Some(data);
     }
     if let Some(parent) = parent {
-        if let Some(parent_data) = spans.get_mut(&(subscriber_id, parent.clone())) {
+        if let Some(parent_data) = parent.get_mut(parents.unwrap_or(&mut *spans)) {
             parent_data.ref_count = parent_data
                 .ref_count
                 .checked_add(1)
                 .expect("Span reference count overflow");
-            data.retained_parent = Some(parent.clone());
+            data.retained_parent = Some(parent.key.1.clone());
         }
     }
-    spans.insert((subscriber_id, id.clone()), data);
+    match lookup.entry(spans) {
+        RawEntryMut::Vacant(entry) => {
+            entry.insert_hashed_nocheck(lookup.hash, lookup.key.clone(), data);
+            None
+        }
+        RawEntryMut::Occupied(_) => {
+            unreachable!("Span became occupied while its shard was locked")
+        }
+    }
 }
 
 pub(crate) fn addref_span(subscriber_id: u64, id: &tracing::span::Id) -> SpanContext {
-    let mut spans = SPAN_DATA.write();
-    let span = spans
-        .get_mut(&(subscriber_id, id.clone()))
+    let key = (subscriber_id, id.clone());
+    let lookup = SpanLookup::new(&key);
+    let mut spans = lookup.shard().write();
+    let span = lookup
+        .get_mut(&mut spans)
         .expect("Clone or enter of an unrecognized span");
     span.ref_count = span
         .ref_count
@@ -241,11 +360,14 @@ pub(crate) fn addref_span(subscriber_id: u64, id: &tracing::span::Id) -> SpanCon
 pub(crate) fn release_span(subscriber_id: u64, id: &tracing::span::Id) -> bool {
     let mut current = (subscriber_id, id.clone());
     loop {
+        let lookup = SpanLookup::new(&current);
         let mut removed = {
-            let mut spans = SPAN_DATA.write();
-            let span = spans
-                .get_mut(&current)
-                .expect("Close of an unrecognized span");
+            let mut spans = lookup.shard().write();
+            let mut entry = match lookup.entry(&mut spans) {
+                RawEntryMut::Occupied(entry) => entry,
+                RawEntryMut::Vacant(_) => panic!("Close of an unrecognized span"),
+            };
+            let span = entry.get_mut();
             span.ref_count = span
                 .ref_count
                 .checked_sub(1)
@@ -253,7 +375,7 @@ pub(crate) fn release_span(subscriber_id: u64, id: &tracing::span::Id) -> bool {
             if span.ref_count != 0 {
                 return current.1 != *id;
             }
-            spans.remove(&current).expect("Closed span is unrecognized")
+            entry.remove()
         };
         let parent = removed.retained_parent.take();
         drop(removed);
@@ -275,8 +397,10 @@ pub(crate) fn enter_span<OutMode: OutputMode>(
 ) {
     let timestamp = Timestamp::now();
 
-    let mut span_data_guard = SPAN_DATA.write();
-    let data = if let Some(data) = span_data_guard.get_mut(&(subscriber_id, id.clone())) {
+    let key = (subscriber_id, id.clone());
+    let lookup = SpanLookup::new(&key);
+    let mut span_data_guard = lookup.shard().write();
+    let data = if let Some(data) = lookup.get_mut(&mut span_data_guard) {
         data
     } else {
         debug_assert!(false, "Enter of unrecognized span");
@@ -284,7 +408,7 @@ pub(crate) fn enter_span<OutMode: OutputMode>(
     };
 
     // TODO:
-    //   - In order to mutate this, we currently have to lock the entire hashmap every time a span is entered.
+    //   - In order to mutate this, we currently have to lock the span's shard every time a span is entered.
     //     This is not great for performance.
     //   - A span can be entered multiple times in a row without being exited. Storing the start time like this
     //     is insufficient for associating a start and stop event.
@@ -310,8 +434,10 @@ pub(crate) fn exit_span<OutMode: OutputMode>(
 ) {
     let stop_timestamp = Timestamp::now();
 
-    let span_data_guard = SPAN_DATA.read();
-    let data = if let Some(data) = span_data_guard.get(&(subscriber_id, id.clone())) {
+    let key = (subscriber_id, id.clone());
+    let lookup = SpanLookup::new(&key);
+    let span_data_guard = lookup.shard().read();
+    let data = if let Some(data) = lookup.get(&span_data_guard) {
         data
     } else {
         debug_assert!(false, "Exit of unrecognized span");
@@ -347,8 +473,10 @@ pub(crate) fn update_span_values(
         },
     });
     {
-        let mut span_data_guard = SPAN_DATA.write();
-        let data = if let Some(data) = span_data_guard.get_mut(&(subscriber_id, id.clone())) {
+        let key = (subscriber_id, id.clone());
+        let lookup = SpanLookup::new(&key);
+        let mut span_data_guard = lookup.shard().write();
+        let data = if let Some(data) = lookup.get_mut(&mut span_data_guard) {
             data
         } else {
             debug_assert!(false, "Event on unrecognized span");
@@ -378,10 +506,9 @@ pub(crate) fn write_event<OutMode: OutputMode>(
         None => (0, None),
         Some(EventSpan::Cached(ids)) => (ids.span_id.get(), Some(ids)),
         Some(EventSpan::Id(id)) => {
-            let ids = SPAN_DATA
-                .read()
-                .get(&(subscriber_id, id.clone()))
-                .map(|data| data.ids);
+            let key = (subscriber_id, id.clone());
+            let lookup = SpanLookup::new(&key);
+            let ids = lookup.get(&lookup.shard().read()).map(|data| data.ids);
             (id.into_u64(), ids)
         }
     };
@@ -418,6 +545,9 @@ mod tests {
         metadata::Kind,
         span::{Attributes, Id},
     };
+
+    // Lock-holding probes must not create artificial cycles with other probes.
+    static LOCK_PROBES: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
     static CALLSITE: DefaultCallsite = DefaultCallsite::new(&META);
     static META: Metadata<'static> = Metadata::new(
@@ -457,11 +587,183 @@ mod tests {
     }
 
     fn contains(subscriber_id: u64, id: &Id) -> bool {
-        SPAN_DATA.read().contains_key(&(subscriber_id, id.clone()))
+        let key = (subscriber_id, id.clone());
+        span_shard(&key).read().contains_key(&key)
+    }
+
+    #[test]
+    fn shard_growth_preserves_entries_and_bucket_distribution() {
+        let subscriber = new_subscriber();
+        let subscriber_id = subscriber.subscriber_id;
+        let ids: Vec<_> = (1..)
+            .map(Id::from_u64)
+            .filter(|id| span_shard_index(&(subscriber_id, id.clone())) == SPAN_SHARD_COUNT / 2)
+            .take(256)
+            .collect();
+        let mut buckets = 0u8;
+        for id in &ids {
+            let key = (subscriber_id, id.clone());
+            buckets |= 1 << (SpanLookup::new(&key).hash & 7);
+            let values = META.fields().value_set(&[]);
+            create_span_data_for_new_span(
+                subscriber_id,
+                &Attributes::new_root(&META, &values),
+                id,
+                None,
+            );
+        }
+        // Selecting a shard must not collapse its entries into one map bucket.
+        assert!(buckets.count_ones() >= 6);
+        for id in &ids {
+            // Ordinary map lookup also verifies the precomputed hash after growth.
+            assert!(contains(subscriber_id, id));
+            assert_eq!(addref_span(subscriber_id, id).id(), *id);
+            assert!(!subscriber.try_close(id.clone()));
+        }
+        for id in ids {
+            assert!(subscriber.try_close(id.clone()));
+            assert!(!contains(subscriber_id, &id));
+        }
+    }
+
+    #[test]
+    fn full_key_shards_allow_independent_span_operations() {
+        let _probe = LOCK_PROBES.lock().unwrap();
+        let subscriber = new_subscriber();
+        let id = Id::from_u64(1);
+        let blocked_key = (subscriber.subscriber_id, id.clone());
+        let blocked_index = span_shard_index(&blocked_key);
+        let other_id = (2..1024)
+            .map(Id::from_u64)
+            .find(|id| span_shard_index(&(subscriber.subscriber_id, id.clone())) != blocked_index)
+            .unwrap();
+        let other_subscriber = (0..128)
+            .map(|_| new_subscriber())
+            .find(|other| span_shard_index(&(other.subscriber_id, id.clone())) != blocked_index)
+            .unwrap();
+        let values = META.fields().value_set(&[]);
+        create_span_data_for_new_span(
+            subscriber.subscriber_id,
+            &Attributes::new_root(&META, &values),
+            &id,
+            None,
+        );
+        for (other, other_id) in [(&subscriber, other_id), (&other_subscriber, id.clone())] {
+            let (sender, receiver) = mpsc::channel();
+            let guard = span_shard(&blocked_key).write();
+            std::thread::scope(|scope| {
+                let worker = scope.spawn(move || {
+                    let values = META.fields().value_set(&[]);
+                    create_span_data_for_new_span(
+                        other.subscriber_id,
+                        &Attributes::new_root(&META, &values),
+                        &other_id,
+                        None,
+                    );
+                    let cloned = other.clone_span(&other_id);
+                    other.record(&other_id, &tracing::span::Record::new(&values));
+                    other.enter(&other_id);
+                    assert_eq!(other.current_span().id(), Some(&other_id));
+                    other.event(&tracing::Event::new_child_of(
+                        Some(other_id.clone()),
+                        &META,
+                        &values,
+                    ));
+                    other.exit(&other_id);
+                    assert!(!other.try_close(cloned));
+                    assert!(other.try_close(other_id));
+                    sender.send(()).unwrap();
+                });
+                let result = receiver.recv_timeout(Duration::from_secs(5));
+                drop(guard);
+                worker.join().unwrap();
+                result.unwrap();
+            });
+        }
+        assert!(subscriber.try_close(id));
+    }
+
+    #[test]
+    fn concurrent_duplicate_creation_retains_parents_once_across_shards() {
+        use core::cmp::Ordering;
+
+        let subscriber = new_subscriber();
+        let subscriber_id = subscriber.subscriber_id;
+        let parent_index = SPAN_SHARD_COUNT / 2;
+        let parent = (1..1024)
+            .map(Id::from_u64)
+            .find(|id| span_shard_index(&(subscriber_id, id.clone())) == parent_index)
+            .unwrap();
+        let children = [Ordering::Less, Ordering::Equal, Ordering::Greater].map(|ordering| {
+            (1..1024)
+                .map(Id::from_u64)
+                .find(|id| {
+                    id != &parent
+                        && span_shard_index(&(subscriber_id, id.clone())).cmp(&parent_index)
+                            == ordering
+                })
+                .unwrap()
+        });
+        let values = META.fields().value_set(&[]);
+        create_span_data_for_new_span(
+            subscriber_id,
+            &Attributes::new_root(&META, &values),
+            &parent,
+            None,
+        );
+        let barrier = std::sync::Barrier::new(7);
+        std::thread::scope(|scope| {
+            let mut handles = Vec::new();
+            for child in &children {
+                for _ in 0..2 {
+                    let subscriber = &subscriber;
+                    let parent = &parent;
+                    let barrier = &barrier;
+                    handles.push(scope.spawn(move || {
+                        let values = META.fields().value_set(&[]);
+                        create_span_data_for_new_span(
+                            subscriber_id,
+                            &Attributes::child_of(parent.clone(), &META, &values),
+                            child,
+                            Some(parent),
+                        );
+                        barrier.wait();
+                        barrier.wait();
+                        subscriber.try_close(child.clone())
+                    }));
+                }
+            }
+            barrier.wait();
+            let parent_key = (subscriber_id, parent.clone());
+            let parent_refs = span_shard(&parent_key)
+                .read()
+                .get(&parent_key)
+                .map(|data| data.ref_count);
+            let child_refs = children.each_ref().map(|child| {
+                let key = (subscriber_id, child.clone());
+                span_shard(&key).read().get(&key).map(|data| data.ref_count)
+            });
+            let parent_closed = subscriber.try_close(parent.clone());
+            barrier.wait();
+            let closed = handles
+                .into_iter()
+                .map(|handle| handle.join().unwrap())
+                .filter(|closed| *closed)
+                .count();
+            assert_eq!(parent_refs, Some(4));
+            assert_eq!(child_refs, [Some(2); 3]);
+            assert!(!parent_closed);
+            assert_eq!(closed, 3);
+        });
+        assert!(!contains(subscriber_id, &parent));
+        for child in &children {
+            assert!(!contains(subscriber_id, child));
+        }
     }
 
     #[test]
     fn cached_current_context_and_events_bypass_the_map() {
+        let _probe = LOCK_PROBES.lock().unwrap();
         let subscriber = new_subscriber();
         let parent = new_span(&subscriber, Parent::Root);
         let child_metadata = tracing::callsite! {
@@ -498,7 +800,7 @@ mod tests {
             });
             ready.recv_timeout(Duration::from_secs(5)).unwrap();
             assert!(!subscriber.try_close(child.clone()));
-            let guard = SPAN_DATA.write();
+            let guard = span_shard(&(subscriber.subscriber_id, child.clone())).write();
             start.send(()).unwrap();
             let completed = result.recv_timeout(Duration::from_secs(5));
             drop(guard);
@@ -511,6 +813,7 @@ mod tests {
 
     #[test]
     fn formats_recorded_values_outside_the_map_lock() {
+        let _probe = LOCK_PROBES.lock().unwrap();
         struct FormattingProbe<'a> {
             start: mpsc::Sender<()>,
             completed: mpsc::Receiver<()>,
@@ -567,8 +870,9 @@ mod tests {
             let id = &id;
             let reader = scope.spawn(move || {
                 start_receiver.recv_timeout(Duration::from_secs(5)).unwrap();
-                let spans = SPAN_DATA.read();
-                assert!(spans.contains_key(&(subscriber_id, id.clone())));
+                let key = (subscriber_id, id.clone());
+                let spans = span_shard(&key).read();
+                assert!(spans.contains_key(&key));
                 completed_sender.send(()).unwrap();
             });
             subscriber.record(
@@ -584,8 +888,9 @@ mod tests {
         });
         assert!(probe.unlocked.get());
         {
-            let spans = SPAN_DATA.read();
-            let fields = &spans[&(subscriber.subscriber_id, id.clone())].fields;
+            let key = (subscriber.subscriber_id, id.clone());
+            let spans = span_shard(&key).read();
+            let fields = &spans[&key].fields;
             assert!(fields.iter().any(|field| {
                 field.field == "value"
                     && matches!(&field.value, ValueTypes::v_str(value) if value == "formatted")
@@ -699,21 +1004,15 @@ mod tests {
         let explicit = new_span(&subscriber, Parent::Explicit(&parent));
         let root = new_span(&subscriber, Parent::Root);
         {
-            let spans = SPAN_DATA.read();
             for id in [&contextual, &explicit] {
+                let key = (subscriber.subscriber_id, id.clone());
                 assert_eq!(
-                    spans[&(subscriber.subscriber_id, id.clone())]
-                        .ids
-                        .parent_span_id,
+                    span_shard(&key).read()[&key].ids.parent_span_id,
                     Some(parent.into_non_zero_u64()),
                 );
             }
-            assert_eq!(
-                spans[&(subscriber.subscriber_id, root.clone())]
-                    .ids
-                    .parent_span_id,
-                None
-            );
+            let key = (subscriber.subscriber_id, root.clone());
+            assert_eq!(span_shard(&key).read()[&key].ids.parent_span_id, None);
         }
         subscriber.exit(&parent);
         assert!(!subscriber.try_close(parent.clone()));
@@ -783,10 +1082,9 @@ mod tests {
             let entered = parent.enter();
             let child = tracing::info_span!("registry child");
             let child_id = child.id().unwrap();
+            let key = (subscriber_id, child_id.clone());
             assert_eq!(
-                SPAN_DATA.read()[&(subscriber_id, child_id.clone())]
-                    .ids
-                    .parent_span_id,
+                span_shard(&key).read()[&key].ids.parent_span_id,
                 Some(parent_id.into_non_zero_u64()),
             );
             drop(entered);
@@ -834,10 +1132,11 @@ mod tests {
 
     #[test]
     fn unparented_events_bypass_the_map_and_preserve_otel_context() {
+        let _probe = LOCK_PROBES.lock().unwrap();
         let subscriber = new_subscriber();
         let writer = RecordingWriter::default();
         let (sender, receiver) = mpsc::channel();
-        let guard = SPAN_DATA.write();
+        let guards: Vec<_> = SPAN_DATA.iter().map(|shard| shard.spans.write()).collect();
         std::thread::scope(|scope| {
             let writer = &writer;
             let reader = scope.spawn(move || {
@@ -859,7 +1158,7 @@ mod tests {
                 sender.send(()).unwrap();
             });
             let result = receiver.recv_timeout(Duration::from_secs(5));
-            drop(guard);
+            drop(guards);
             reader.join().unwrap();
             result.unwrap();
         });

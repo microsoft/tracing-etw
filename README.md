@@ -61,19 +61,29 @@ lookups do not acquire a lock.
 Hashing uses explicitly seeded `ahash::RandomState` values. The dependency's
 standard-library and runtime-RNG default features are disabled.
 
-The standalone subscriber caches immutable span IDs, parent IDs, and metadata
-in entered-span stacks. Current-span queries and contextual event correlation
-therefore avoid the shared span map, as do events without a parent span.
-Recorded span values are formatted before acquiring the map lock; replaced
-values and removed span payloads are destroyed after releasing it. Span
-start/stop encoding still borrows the payload under its shard's lock.
+The standalone subscriber indexes stable, cache-line-aligned entries with
+independent payload locks and caches owning handles in entered-span stacks.
+Re-entry, recording, nonfinal entered-reference release, and stop
+emission can use those handles without hashing or acquiring a shard lock.
+Current-span queries and contextual event correlation read immutable cached
+IDs and metadata; events without a parent also bypass span storage.
 
-Standalone span entry retains its reference and emits the start event under
-one shard acquisition, after preparing thread-local storage outside the lock.
-On native no-std targets, exit emits the stop event and releases the entered
-reference under one exclusive acquisition. Standard-library-backed exit keeps
-its shared emission lock so an emission panic does not newly poison the lock.
-Removed payloads and retained parents are still released outside the guard.
+Tracing's logical reference count is tracked separately from allocation
+ownership. An entered handle retains one logical reference; temporary memory
+borrows do not delay logical closure. Final removal acquires the shard
+exclusively, then releases retained parents and destroys payloads outside it.
+Standalone start/stop encoding borrows the payload under its own lock, so
+unrelated spans in the same shard do not serialize emission. Stop emission uses
+a shared guard, preserving standard-library lock poisoning behavior on writer panics.
+Recorded values are formatted before borrowing TLS or locking the payload;
+replaced values are destroyed after releasing both. An unavailable entered
+cache falls back to ID lookup, including during TLS initialization/teardown.
+Each shard can reuse up to four fully released entry allocations. Reuse requires
+exclusive allocation ownership, clears recorded fields before caching, and
+never recycles an entry still referenced by an entered handle or memory borrow.
+The registry-backed layer retains inline span payloads under shard locks;
+it does not pay for standalone entry allocations or per-entry locks.
+
 Standalone span IDs are allocated in thread/fiber-local batches of up to 1024
 from the same global counter used for subscriber IDs. Batches share the existing
 span-stack TLS slot; IDs remain globally unique and nonzero, but unused IDs in

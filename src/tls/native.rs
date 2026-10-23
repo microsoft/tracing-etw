@@ -77,6 +77,21 @@ impl<T> LocalKey<T> {
         // a reference beyond this call.
         f(unsafe { &(*value.cast::<Value<T>>()).value })
     }
+
+    pub(crate) fn try_with<R>(&'static self, f: impl FnOnce(&T) -> R) -> Option<R> {
+        let key = self.published.load(Ordering::Acquire);
+        if key.is_null() {
+            return None;
+        }
+        // SAFETY: Publication keeps this immutable key alive for the process.
+        let value = unsafe { &*key }.get();
+        if value.is_null() || value == BUSY {
+            return None;
+        }
+        // SAFETY: As in with(), this thread/fiber owns the live allocation and
+        // the callback cannot retain a borrow beyond this call.
+        Some(f(unsafe { &(*value.cast::<Value<T>>()).value }))
+    }
 }
 
 impl<T> LocalKey<RefCell<T>> {
@@ -114,6 +129,21 @@ mod tests {
     use super::*;
     use core::sync::atomic::AtomicUsize;
     use std::panic::{AssertUnwindSafe, catch_unwind};
+
+    #[test]
+    fn optional_access_does_not_initialize_or_reenter_a_busy_slot() {
+        static LOCAL: LocalKey<usize> = LocalKey::new(|| {
+            assert!(LOCAL.try_with(|_| ()).is_none());
+            7
+        });
+        std::thread::spawn(|| {
+            assert!(LOCAL.try_with(|_| ()).is_none());
+            LOCAL.with(|value| assert_eq!(*value, 7));
+            assert_eq!(LOCAL.try_with(|value| *value), Some(7));
+        })
+        .join()
+        .unwrap();
+    }
 
     #[test]
     fn published_key_bypasses_the_blocking_initializer() {

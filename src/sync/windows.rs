@@ -19,6 +19,10 @@ unsafe impl<T: Send> Send for RwLock<T> {}
 unsafe impl<T: Send + Sync> Sync for RwLock<T> {}
 
 impl<T> RwLock<T> {
+    pub(crate) fn get_mut(&mut self) -> Option<&mut T> {
+        Some(self.value.get_mut())
+    }
+
     pub(crate) const fn new(value: T) -> Self {
         Self {
             raw: UnsafeCell::new(SRWLOCK_INIT),

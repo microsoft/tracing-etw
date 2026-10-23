@@ -1,12 +1,28 @@
 //! Thread-local values with native thread-exit cleanup in feature-off builds.
 
 #[cfg(any(feature = "std", not(any(windows, target_os = "linux"))))]
+use std::thread::LocalKey;
+#[cfg(any(feature = "std", not(any(windows, target_os = "linux"))))]
 pub(crate) use std::thread_local;
 
 #[cfg(all(not(feature = "std"), any(windows, target_os = "linux")))]
 mod native;
 #[cfg(all(not(feature = "std"), any(windows, target_os = "linux")))]
 pub(crate) use native::LocalKey;
+
+pub(crate) fn try_with<T: 'static, R>(
+    key: &'static LocalKey<T>,
+    f: impl FnOnce(&T) -> R,
+) -> Option<R> {
+    #[cfg(any(feature = "std", not(any(windows, target_os = "linux"))))]
+    {
+        key.try_with(f).ok()
+    }
+    #[cfg(all(not(feature = "std"), any(windows, target_os = "linux")))]
+    {
+        key.try_with(f)
+    }
+}
 
 #[cfg(all(not(feature = "std"), windows))]
 mod windows;

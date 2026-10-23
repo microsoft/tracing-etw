@@ -40,6 +40,10 @@ unsafe fn destroy_raw(raw: *mut libc::pthread_rwlock_t) {
 }
 
 impl<T> RwLock<T> {
+    pub(crate) fn get_mut(&mut self) -> Option<&mut T> {
+        Some(self.value.get_mut())
+    }
+
     pub(crate) const fn new(value: T) -> Self {
         Self {
             raw: AtomicPtr::new(ptr::null_mut()),

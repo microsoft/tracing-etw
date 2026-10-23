@@ -72,7 +72,12 @@ where
         } else {
             attrs.parent().cloned()
         };
-        common::create_span_data_for_new_span(self.subscriber_id, attrs, id, parent.as_ref())
+        common::create_registry_span_data_for_new_span(
+            self.subscriber_id,
+            attrs,
+            id,
+            parent.as_ref(),
+        )
     }
 
     fn on_enter(&self, id: &span::Id, _ctx: tracing_subscriber::layer::Context<'_, S>) {

@@ -34,6 +34,10 @@ impl<T> RwLock<T> {
     pub(crate) fn write(&self) -> std::sync::RwLockWriteGuard<'_, T> {
         self.0.write().expect("RwLock poisoned")
     }
+
+    pub(crate) fn get_mut(&mut self) -> Option<&mut T> {
+        self.0.get_mut().ok()
+    }
 }
 
 #[cfg(all(test, not(feature = "std"), any(windows, target_os = "linux")))]

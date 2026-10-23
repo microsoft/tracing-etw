@@ -45,21 +45,8 @@ impl IdBatch {
     }
 }
 
-struct EnteredSpan {
-    subscriber_id: u64,
-    context: Option<common::SpanContext>,
-}
-
-impl Drop for EnteredSpan {
-    fn drop(&mut self) {
-        if let Some(context) = self.context.take() {
-            common::release_span(self.subscriber_id, &context.id());
-        }
-    }
-}
-
 struct ThreadState {
-    spans: Vec<EnteredSpan>,
+    spans: Vec<common::SpanHandle>,
     ids: IdBatch,
 }
 
@@ -68,8 +55,8 @@ impl ThreadState {
         self.spans
             .iter()
             .rev()
-            .find(|span| span.subscriber_id == subscriber_id)
-            .and_then(|span| span.context)
+            .find(|span| span.subscriber_id() == subscriber_id)
+            .map(common::SpanHandle::context)
     }
 }
 
@@ -85,6 +72,23 @@ crate::tls::thread_local! {
 impl<OutMode: OutputMode> _EtwTracingSubscriber<OutMode> {
     fn current_span_context(&self) -> Option<common::SpanContext> {
         THREAD_STATE.with_borrow(|state| state.current_span_context(self.subscriber_id))
+    }
+
+    fn with_entered_span<R>(
+        &self,
+        id: &tracing_core::span::Id,
+        f: impl FnOnce(&common::SpanHandle) -> R,
+    ) -> Option<R> {
+        crate::tls::try_with(&THREAD_STATE, |state| {
+            let state = state.try_borrow().ok()?;
+            state
+                .spans
+                .iter()
+                .rev()
+                .find(|span| span.matches(self.subscriber_id, id))
+                .map(f)
+        })
+        .flatten()
     }
 }
 
@@ -156,7 +160,14 @@ where
     }
 
     fn record(&self, id: &tracing_core::span::Id, values: &tracing_core::span::Record<'_>) {
-        common::update_span_values(self.subscriber_id, id, values)
+        // User formatting may reenter tracing, so finish it before borrowing TLS.
+        let mut updates = common::SpanUpdates::new(values);
+        if self
+            .with_entered_span(id, |handle| handle.update_values(&mut updates))
+            .is_none()
+        {
+            common::update_span_values_prepared(self.subscriber_id, id, &mut updates);
+        }
     }
 
     fn record_follows_from(
@@ -179,7 +190,10 @@ where
             self.current_span_context()
                 .map(|context| common::EventSpan::Cached(context.ids))
         } else {
-            event.parent().map(common::EventSpan::Id)
+            event.parent().map(|id| {
+                self.with_entered_span(id, |handle| common::EventSpan::Cached(handle.context().ids))
+                    .unwrap_or(common::EventSpan::Id(id))
+            })
         };
 
         common::write_event(
@@ -197,62 +211,58 @@ where
     fn enter(&self, id: &tracing_core::span::Id) {
         THREAD_STATE.with(|state| {
             let mut state = state.borrow_mut();
-            // Initialize TLS and reserve capacity before retaining under the shard lock.
+            // Initialize TLS and reserve capacity before retaining an entry.
             state.spans.reserve(1);
-            common::enter_span_retained(
-                self.subscriber_id,
-                id,
-                self.provider.as_ref(),
-                self.default_keyword,
-                0,
-                None,
-                |context| {
-                    state.spans.push(EnteredSpan {
-                        subscriber_id: self.subscriber_id,
-                        context: Some(context),
-                    });
-                    // Emission can access the current span without borrowing conflicts.
-                    drop(state);
-                },
-            );
+            let cached = state
+                .spans
+                .iter()
+                .rev()
+                .find(|span| span.matches(self.subscriber_id, id))
+                .cloned();
+            let register = |handle| {
+                state.spans.push(handle);
+                drop(state);
+            };
+            if let Some(handle) = cached {
+                common::enter_span_cached(
+                    handle,
+                    self.provider.as_ref(),
+                    self.default_keyword,
+                    0,
+                    None,
+                    register,
+                );
+            } else {
+                common::enter_span_retained(
+                    self.subscriber_id,
+                    id,
+                    self.provider.as_ref(),
+                    self.default_keyword,
+                    0,
+                    None,
+                    register,
+                );
+            }
         });
     }
 
     fn exit(&self, id: &tracing_core::span::Id) {
-        #[allow(unused_mut)]
-        let mut entered = THREAD_STATE.with_borrow_mut(|state| {
+        let entered = THREAD_STATE.with_borrow_mut(|state| {
             let index = state
                 .spans
                 .iter()
-                .rposition(|span| {
-                    span.subscriber_id == self.subscriber_id
-                        && span
-                            .context
-                            .is_some_and(|context| context.ids.span_id == id.into_non_zero_u64())
-                })
+                .rposition(|span| span.matches(self.subscriber_id, id))
                 .expect("Exit of a span that is not entered on this thread");
             state.spans.remove(index)
         });
         // Spans don't have callsites to store keyword/tag metadata on,
         // so we must use the defaults.
-        #[cfg(any(feature = "std", not(any(windows, target_os = "linux"))))]
-        common::exit_span(
-            self.subscriber_id,
-            id,
+        common::exit_span_cached(
+            &entered,
             self.provider.as_ref(),
             self.default_keyword,
             0,
             None,
-        );
-        #[cfg(all(not(feature = "std"), any(windows, target_os = "linux")))]
-        common::exit_span_releasing(
-            self.subscriber_id,
-            id,
-            self.provider.as_ref(),
-            self.default_keyword,
-            0,
-            None,
-            &mut entered.context,
         );
         drop(entered);
     }
@@ -304,7 +314,6 @@ mod tests {
         assert_eq!(counter.load(Ordering::Relaxed), u64::MAX);
     }
 
-    #[cfg(all(not(feature = "std"), any(windows, target_os = "linux")))]
     #[test]
     fn entering_an_unknown_span_panics_even_in_release_builds() {
         let subscriber = crate::LayerBuilder::new("UnknownEntryTests")
@@ -339,6 +348,29 @@ mod tests {
         });
         assert!(result.is_err());
         assert!(subscriber.current_span().id().is_none());
+        assert!(subscriber.try_close(id));
+    }
+
+    #[test]
+    fn recording_works_when_the_entered_cache_is_borrowed() {
+        let subscriber = crate::LayerBuilder::new("BorrowedCacheTests")
+            .build_subscriber()
+            .unwrap();
+        let metadata = tracing::callsite! {
+            name: "uncached ID operations",
+            kind: tracing::metadata::Kind::SPAN,
+            target: module_path!(),
+            level: tracing::Level::INFO,
+            fields:
+        }
+        .metadata();
+        let values = metadata.fields().value_set(&[]);
+        let id = subscriber.new_span(&tracing_core::span::Attributes::new_root(metadata, &values));
+        THREAD_STATE.with_borrow_mut(|_| {
+            let cloned = subscriber.clone_span(&id);
+            subscriber.record(&id, &tracing_core::span::Record::new(&values));
+            assert!(!subscriber.try_close(cloned));
+        });
         assert!(subscriber.try_close(id));
     }
 }

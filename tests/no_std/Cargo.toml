@@ -1,0 +1,25 @@
+[package]
+name = "tracing-etw-no-std"
+version = "0.0.0"
+edition = "2024"
+rust-version = "1.85"
+publish = false
+
+# Keep the library's std-enabled dev dependencies out of this feature graph.
+[workspace]
+
+[dependencies]
+exporter = { package = "tracing-etw", path = "../..", default-features = false }
+trace = { package = "tracing", version = "0.1", default-features = false }
+libc = { version = "0.2", default-features = false }
+
+[target.'cfg(windows)'.dependencies]
+windows-sys = { version = "0.61", default-features = false, features = ["Win32_Foundation", "Win32_Security", "Win32_System_Threading"] }
+
+[profile.dev]
+panic = "abort"
+
+[profile.release]
+panic = "abort"
+# Discard unused unwind references from the prebuilt Linux liballoc.
+lto = true

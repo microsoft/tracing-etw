@@ -1,35 +1,37 @@
 [package]
 name = "tracing-etw"
-version = "0.3.0"
-edition = "2021"
+version = "0.4.0"
+edition = "2024"
 resolver = "2"
 license = "MIT"
 repository = "https://github.com/microsoft/tracing-etw"
-rust-version = "1.82"
+rust-version = "1.85"
 authors = ["Kyle Sabo", "Microsoft"]
 description = "ETW or Linux user_events output for tokio-tracing"
 
 [lib]
 crate-type = ["rlib"]
+doctest = false
 
 [features]
-global_filter = []
+default = ["std", "opentelemetry"]
+std = ["tracing-subscriber/registry", "tracing/std", "dep:hashbrown"]
 # Enable OpenTelemetry trace context extraction. When enabled, span_id and trace_id
-# will be extracted from tracing-opentelemetry's OtelData span extensions when available.
-opentelemetry = ["dep:tracing-opentelemetry", "dep:opentelemetry"]
+# will be extracted using tracing-opentelemetry's context API when available.
+opentelemetry = ["dep:tracing-opentelemetry", "dep:opentelemetry", "std", "tracing-subscriber/registry"]
 
 [dependencies]
 tracing = {version = "0.1", default-features = false}
 tracing-core = {version = "0.1", default-features = false}
-tracing-subscriber = {version="0.3", default-features = false, features=["registry"]}
-chrono = {version="0.4", default-features = false, features=["std"]}
+tracing-subscriber = {version="0.3", default-features = false, optional = true}
 paste = "1"
 thiserror = {version="2", default-features = false}
-hashers = "1"
-hashbrown = "0.15"
+ahash = {version = "0.8", default-features = false}
+hashbrown = {version = "0.17", optional = true}
 
 # Optional OpenTelemetry dependencies
-tracing-opentelemetry = {version = "0.32", optional = true}
+tracing-opentelemetry = {version = "0.34", optional = true}
+# Match the OpenTelemetry API version used by tracing-opentelemetry.
 opentelemetry = {version = "0.33", optional = true, default-features = false, features = ["trace"]}
 
 [target.'cfg(not(target_os = "linux"))'.dependencies]
@@ -37,11 +39,17 @@ tracelogging = ">= 1.2.0"
 tracelogging_dynamic = ">= 1.2.0"
 
 [target.'cfg(target_os = "linux")'.dependencies]
-eventheader = ">= 0.4"
-eventheader_dynamic = ">= 0.4"
+eventheader = ">= 0.5"
+eventheader_dynamic = ">= 0.5"
+
+[target.'cfg(windows)'.dependencies]
+windows-sys = {version = "0.61", default-features = false, features = ["Win32_Foundation", "Win32_System_SystemInformation", "Win32_System_Threading"]}
+
+[target.'cfg(unix)'.dependencies]
+libc = {version = "0.2", default-features = false}
 
 [dev-dependencies]
-criterion = {version="0.5", features=["html_reports"]}
+criterion = {version="0.8", features=["html_reports"]}
 tracing = {version = "0.1", default-features = false, features = ["std", "attributes"]}
 tracing-subscriber = {version="0.3", default-features = false, features=["std", "fmt", "registry"]}
 
@@ -56,6 +64,38 @@ harness = false
 [[bench]]
 name = "user_events"
 harness = false
+required-features = ["std"]
+
+[[example]]
+name = "basic"
+required-features = ["std"]
+
+[[example]]
+name = "etw_event"
+required-features = ["std"]
+
+[[example]]
+name = "instrument"
+required-features = ["std"]
+
+[[example]]
+name = "span"
+required-features = ["std"]
+
+[[example]]
+name = "stress"
+required-features = ["std"]
+
+[[test]]
+name = "core_spans"
+
+[[test]]
+name = "registry_spans"
+required-features = ["std"]
+
+[[test]]
+name = "no_static_metadata"
+required-features = ["std"]
 
 [package.metadata.docs.rs]
 all-features = true

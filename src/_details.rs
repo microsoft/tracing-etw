@@ -3,6 +3,9 @@
 //
 // Implementations for these structs are contained in other files.
 
+pub use paste::paste;
+pub use {tracing, tracing_core};
+
 // Public with public fields because the `etw_event!` macro needs to create it at invocation site.
 #[doc(hidden)]
 #[repr(C)]

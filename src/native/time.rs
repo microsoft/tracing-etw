@@ -4,7 +4,9 @@
 //! `timespec`. Clock reads, calendar arithmetic, and formatting do not use the
 //! Rust standard library.
 
+#[cfg(any(windows, target_os = "linux", test))]
 use crate::values::FormatBuffer;
+#[cfg(any(windows, target_os = "linux", test))]
 use core::fmt::Write;
 #[cfg(any(windows, unix))]
 use core::mem::MaybeUninit;
@@ -178,11 +180,13 @@ fn days_from_civil(year: i64, month: u8, day: u8) -> i64 {
 }
 
 // Fits every four-digit year with nanoseconds; extreme years spill to the heap.
+#[cfg(any(windows, target_os = "linux", test))]
 const RFC3339_CAPACITY: usize = 40;
 
 /// Formats UTC with Chrono-compatible automatic fractional-second precision.
 ///
 /// Formats into inline storage so per-event timestamps do not allocate.
+#[cfg(any(windows, target_os = "linux", test))]
 pub(crate) fn to_rfc3339(ct: CivilTime) -> FormatBuffer<RFC3339_CAPACITY> {
     let mut out = FormatBuffer::new();
     if (0..=9_999).contains(&ct.year) {

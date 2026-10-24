@@ -104,12 +104,15 @@ pub(crate) enum EventSpan<'a> {
 
 #[doc(hidden)]
 #[derive(Clone, Copy)]
+// The no-op writer ignores these shared event-writer inputs.
+#[cfg_attr(not(any(windows, target_os = "linux")), allow(dead_code))]
 pub struct SpanStrings {
     pub(crate) trace_id: [u8; 32], // UTF-8 hex bytes, only non-zero if the otel feature is enabled and the span has a valid trace ID
     pub(crate) span_id: [u8; 16], // UTF-8 hex bytes, either the otel span ID if the otel feature is enabled, or the local span ID
     pub(crate) parent_span_id: Option<[u8; 16]>, // UTF-8 hex bytes, only Some if the otel feature is enabled and the span has a valid parent span ID
 }
 
+#[cfg_attr(not(any(windows, target_os = "linux")), allow(dead_code))]
 impl SpanStrings {
     fn build(ids: SpanIds, otel_span_strings: Option<OtelSpanStrings>) -> SpanStrings {
         otel_span_strings.unwrap_or_else(|| SpanStrings {
@@ -218,11 +221,14 @@ fn release_span_reference(entry: &SpanEntry) -> bool {
 // Data crated by tracing_core for a span, plus the crate data.
 // Exists for the duration of the enter/exit call; short-lived.
 #[doc(hidden)]
+// The no-op writer ignores these shared event-writer inputs.
+#[cfg_attr(not(any(windows, target_os = "linux")), allow(dead_code))]
 pub struct SpanRef<'a> {
     data: &'a SpanData,
     otel_span_strings: Option<OtelSpanStrings>,
 }
 
+#[cfg_attr(not(any(windows, target_os = "linux")), allow(dead_code))]
 impl SpanRef<'_> {
     pub(crate) fn name(&self) -> &'static str {
         self.data.metadata.name()

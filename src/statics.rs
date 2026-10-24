@@ -2,6 +2,7 @@
 
 use core::{cmp, iter::FusedIterator};
 extern crate alloc;
+#[cfg(any(target_os = "windows", target_os = "linux"))]
 use alloc::{boxed::Box, vec::Vec};
 
 use crate::{

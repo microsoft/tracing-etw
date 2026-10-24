@@ -16,6 +16,9 @@ encoding; requires a Linux 6.4+ kernel).
 
 *Note*: Linux kernels without user_events support will not log any events.
 
+Other platforms use a no-op exporter: providers are always disabled and no
+events are emitted.
+
 ## Standalone subscriber
 
 The default `std` feature enables integration with `tracing-subscriber`'s span

@@ -30,9 +30,9 @@ ahash = {version = "0.8", default-features = false}
 hashbrown = {version = "0.17", optional = true}
 
 # Optional OpenTelemetry dependencies
-tracing-opentelemetry = {version = "0.33", optional = true}
+tracing-opentelemetry = {version = "0.34", optional = true}
 # Match the OpenTelemetry API version used by tracing-opentelemetry.
-opentelemetry = {version = "0.32", optional = true, default-features = false, features = ["trace"]}
+opentelemetry = {version = "0.33", optional = true, default-features = false, features = ["trace"]}
 
 [target.'cfg(not(target_os = "linux"))'.dependencies]
 tracelogging = ">= 1.2.0"
@@ -49,7 +49,7 @@ windows-sys = {version = "0.61", default-features = false, features = ["Win32_Fo
 libc = {version = "0.2", default-features = false}
 
 [dev-dependencies]
-criterion = {version="0.5", features=["html_reports"]}
+criterion = {version="0.8", features=["html_reports"]}
 tracing = {version = "0.1", default-features = false, features = ["std", "attributes"]}
 tracing-subscriber = {version="0.3", default-features = false, features=["std", "fmt", "registry"]}
 

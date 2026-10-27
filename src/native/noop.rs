@@ -19,9 +19,10 @@ pub struct Provider<Mode: OutputMode> {
 }
 
 impl<Mode: OutputMode> crate::native::ProviderTraits for Provider<Mode> {
+    // The no-op provider is never enabled, so callsites can cache `Interest::never`.
     #[inline(always)]
     fn supports_enable_callback() -> bool {
-        false
+        true
     }
 
     fn is_valid_provider(_provider_name: &str) -> Result<(), EtwError> {

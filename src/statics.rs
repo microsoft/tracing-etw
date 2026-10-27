@@ -1,16 +1,28 @@
 // Module for static variables that are used by the crate.
 
-use std::{cmp, hash::BuildHasher, iter::FusedIterator, sync::LazyLock};
+use core::{cmp, iter::FusedIterator};
+extern crate alloc;
+#[cfg(any(target_os = "windows", target_os = "linux"))]
+use alloc::{boxed::Box, vec::Vec};
 
-use crate::_details::{EventMetadata, ParsedEventMetadata};
+use crate::{
+    _details::{EventMetadata, ParsedEventMetadata},
+    sync::LazyLock,
+};
 
-type FnvHasher = std::hash::BuildHasherDefault<hashers::fnv::FNV1aHasher64>;
+// DOS resistance is not needed here.
+// Since we are computing hashes once to generate the static lookup array,
+// and then again every time an event is logged, we need the hashers
+// for each step to return identical values. Whether those values are predictable
+// or consistent across processes is unimportant.
+static HASHER: ahash::RandomState = ahash::RandomState::with_seeds(
+        17_616_942_133_695_121_499,
+        9_565_839_503_509_016_163,
+        2_756_528_679_765_226_774,
+        228_784_672_216_536_063);
 
 pub(crate) static GLOBAL_ACTIVITY_SEED: LazyLock<[u8; 16]> = LazyLock::new(|| {
-    let now = std::time::SystemTime::now()
-        .duration_since(std::time::SystemTime::UNIX_EPOCH)
-        .unwrap()
-        .as_nanos();
+    let now = crate::native::time::Timestamp::now().unix_nanoseconds() as u128;
     let seed = (now >> 64) as u64 | now as u64;
     let mut data = [0; 16];
     let (seed_half, _) = data.split_at_mut(8);
@@ -82,14 +94,12 @@ fn process_static_metadata() -> Box<[ParsedEventMetadata]> {
         next_pos += 1;
     }
 
-    let bh = FnvHasher::default();
-
     let mut vec = Vec::with_capacity(good_pos + 1);
     next_pos = 0;
     while next_pos <= good_pos {
         // SAFETY The above code as already validated that events_slice[0..good_pos] are non-null pointers
         let next = unsafe { &*events_slice[next_pos] };
-        let identity_hash = bh.hash_one(&next.identity);
+        let identity_hash = HASHER.hash_one(&next.identity);
         vec.push(ParsedEventMetadata {
             identity_hash,
             meta: next,
@@ -125,7 +135,7 @@ impl core::cmp::PartialOrd for ParsedEventMetadata {
 
 // Order by hash only
 impl core::cmp::Ord for ParsedEventMetadata {
-    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
+    fn cmp(&self, other: &Self) -> cmp::Ordering {
         self.identity_hash.cmp(&other.identity_hash)
     }
 }
@@ -133,12 +143,12 @@ impl core::cmp::Ord for ParsedEventMetadata {
 pub(crate) fn get_event_metadata(
     id: &tracing::callsite::Identifier,
 ) -> Option<&'static crate::_details::EventMetadata> {
-    let bh = FnvHasher::default();
-    let identity_hash = bh.hash_one(id);
-    let idx = EVENT_METADATA.partition_point(|other| other.identity_hash > identity_hash);
+    let identity_hash = HASHER.hash_one(id);
+    let metadata: &[ParsedEventMetadata] = &EVENT_METADATA;
+    let idx = metadata.partition_point(|other| other.identity_hash > identity_hash);
     let mut cur = idx;
-    while cur < EVENT_METADATA.len() {
-        let meta = &EVENT_METADATA[cur];
+    while cur < metadata.len() {
+        let meta = &metadata[cur];
         if meta.identity_hash != identity_hash {
             return None;
         }
@@ -162,11 +172,12 @@ impl Iterator for EventMetadataEnumerator {
     type Item = &'static EventMetadata;
 
     fn next(&mut self) -> Option<Self::Item> {
-        if self.current_index >= EVENT_METADATA.len() {
+        let metadata: &[ParsedEventMetadata] = &EVENT_METADATA;
+        if self.current_index >= metadata.len() {
             return None;
         }
 
-        let result = &EVENT_METADATA[self.current_index].meta;
+        let result = &metadata[self.current_index].meta;
 
         self.current_index += 1;
 
@@ -223,16 +234,27 @@ mod test {
         etw_event!(name: "TestEventWithKeyword9", Level::WARN, 9, "An event with a name and keyword!");
         etw_event!(name: "TestEventWithKeyword10", Level::ERROR, 10, "An event with a name and keyword!");
 
-        let mut sum = 0;
-        for event in event_metadata() {
-            sum += event.kw;
-        }
-
         #[cfg(any(target_os = "windows", target_os = "linux"))]
         let expected = 55;
         #[cfg(not(any(target_os = "windows", target_os = "linux")))]
         let expected = 0;
 
-        assert_eq!(sum, expected);
+        let barrier = std::sync::Barrier::new(8);
+        std::thread::scope(|scope| {
+            for _ in 0..8 {
+                scope.spawn(|| {
+                    barrier.wait();
+                    let mut sum = 0;
+                    for event in event_metadata() {
+                        sum += event.kw;
+                        assert!(core::ptr::eq(
+                            super::get_event_metadata(&event.identity).unwrap(),
+                            event,
+                        ));
+                    }
+                    assert_eq!(sum, expected);
+                });
+            }
+        });
     }
 }

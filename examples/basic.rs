@@ -1,4 +1,4 @@
-use tracing::{event, Level};
+use tracing::{Level, event};
 use tracing_etw::LayerBuilder;
 use tracing_subscriber::{self, fmt::format::FmtSpan, prelude::*};
 

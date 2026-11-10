@@ -3,7 +3,7 @@ pub(crate) mod span_values;
 
 extern crate alloc;
 use alloc::{borrow::Cow, string::String};
-use core::{fmt, mem::MaybeUninit, ptr};
+use core::fmt;
 
 /// Inline capacity for formatting field values without a heap allocation.
 pub(crate) const FORMAT_INLINE_CAPACITY: usize = 512;
@@ -11,7 +11,7 @@ pub(crate) const FORMAT_INLINE_CAPACITY: usize = 512;
 /// A string builder that formats into inline storage and spills to the heap
 /// only when the output exceeds `N` bytes.
 pub(crate) struct FormatBuffer<const N: usize> {
-    inline: [MaybeUninit<u8>; N],
+    inline: [u8; N],
     len: usize,
     spilled: Option<String>,
 }
@@ -20,7 +20,7 @@ impl<const N: usize> FormatBuffer<N> {
     #[inline]
     pub(crate) const fn new() -> Self {
         Self {
-            inline: [MaybeUninit::uninit(); N],
+            inline: [0; N],
             len: 0,
             spilled: None,
         }
@@ -30,14 +30,9 @@ impl<const N: usize> FormatBuffer<N> {
     pub(crate) fn as_str(&self) -> &str {
         match &self.spilled {
             Some(spilled) => spilled,
-            // SAFETY: The first `len` bytes were initialized by copying whole
-            // `&str` values, so they are valid UTF-8.
-            None => unsafe {
-                core::str::from_utf8_unchecked(core::slice::from_raw_parts(
-                    self.inline.as_ptr().cast(),
-                    self.len,
-                ))
-            },
+            // The inline prefix is built only from whole `&str` values.
+            None => core::str::from_utf8(&self.inline[..self.len])
+                .expect("Inline format buffer holds valid UTF-8"),
         }
     }
 
@@ -57,16 +52,9 @@ impl<const N: usize> fmt::Write for FormatBuffer<N> {
         if let Some(spilled) = &mut self.spilled {
             spilled.push_str(s);
         } else if s.len() <= N - self.len {
-            // SAFETY: The destination has room for `s` after the initialized
-            // prefix, and the source cannot overlap this buffer.
-            unsafe {
-                ptr::copy_nonoverlapping(
-                    s.as_ptr(),
-                    self.inline.as_mut_ptr().add(self.len).cast(),
-                    s.len(),
-                );
-            }
-            self.len += s.len();
+            let end = self.len + s.len();
+            self.inline[self.len..end].copy_from_slice(s.as_bytes());
+            self.len = end;
         } else {
             let mut spilled = String::with_capacity((self.len + s.len()).max(2 * N));
             spilled.push_str(self.as_str());

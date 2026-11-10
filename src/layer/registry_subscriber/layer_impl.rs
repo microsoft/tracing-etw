@@ -30,6 +30,23 @@ impl<OutMode: OutputMode, S> _EtwTracingSubscriber<OutMode, S> {
             None
         }
     }
+
+    // Span stop records also carry the parent's span ID. Prefer the parent's
+    // OpenTelemetry span ID, falling back to its local span ID.
+    fn get_otel_span_stop_strings(
+        &self,
+        id: &span::Id,
+        parent: impl FnOnce() -> Option<span::Id>,
+    ) -> Option<SpanStrings> {
+        let mut strings = self.get_otel_span_strings(Some(id))?;
+        strings.parent_span_id = parent().map(|parent| {
+            self.get_otel_span_strings(Some(&parent)).map_or_else(
+                || crate::native::to_hex_utf8_bytes(parent.into_u64()),
+                |parent| parent.span_id,
+            )
+        });
+        Some(strings)
+    }
 }
 
 impl<OutMode: OutputMode + 'static, S> tracing_subscriber::Layer<S>
@@ -44,7 +61,10 @@ where
     }
 
     fn on_layer(&mut self, _subscriber: &mut S) {
-        // Late init when the layer is added to a subscriber
+        // Span IDs are only unique within one subscriber, so each attachment
+        // needs its own storage identity. Clones attached to different
+        // registries would otherwise share span data for colliding IDs.
+        self.subscriber_id = crate::layer::core_subscriber::next_id();
     }
 
     fn on_event(&self, event: &tracing::Event<'_>, ctx: tracing_subscriber::layer::Context<'_, S>) {
@@ -74,12 +94,15 @@ where
         id: &span::Id,
         ctx: tracing_subscriber::layer::Context<'_, S>,
     ) {
-        // We can't cache the otel spans here because we don't know which layer will see the span first
-        let parent = if attrs.is_contextual() {
-            ctx.lookup_current().map(|span| span.id())
-        } else {
-            attrs.parent().cloned()
-        };
+        // We can't cache the otel spans here because we don't know which layer will see the span first.
+        // Use the registry ancestry rather than the entered-span stack: the
+        // registry keeps ancestors alive until their children close, so the
+        // retained parent ID cannot be recycled early. For filtered layers,
+        // parent() also skips ancestors this layer did not enable.
+        let parent = ctx
+            .span(id)
+            .and_then(|span| span.parent())
+            .map(|parent| parent.id());
         registry::create_span_data_for_new_span(self.subscriber_id, attrs, id, parent.as_ref())
     }
 
@@ -98,7 +121,7 @@ where
         )
     }
 
-    fn on_exit(&self, id: &span::Id, _ctx: tracing_subscriber::layer::Context<'_, S>) {
+    fn on_exit(&self, id: &span::Id, ctx: tracing_subscriber::layer::Context<'_, S>) {
         // Spans don't have callsites to store keyword/tag metadata on,
         // so we must use the defaults.
         registry::exit_span(
@@ -107,11 +130,17 @@ where
             self.provider.as_ref(),
             self.default_keyword,
             0,
-            self.get_otel_span_strings(Some(id)),
+            self.get_otel_span_stop_strings(id, || {
+                ctx.span(id)
+                    .and_then(|span| span.parent())
+                    .map(|parent| parent.id())
+            }),
         )
     }
 
     fn on_close(&self, id: span::Id, _ctx: tracing_subscriber::layer::Context<'_, S>) {
+        // Spans created before this layer was attached (for example through
+        // tracing_subscriber::reload) are unknown and ignored.
         let _ = registry::release_span(self.subscriber_id, &id);
     }
 
@@ -196,7 +225,16 @@ mod tests {
         let weak = layer.dispatch.get().unwrap().clone();
         drop(span);
         drop(dispatch);
-        assert!(weak.upgrade().is_none());
+        // Concurrent callsite-interest rebuilds in other tests can briefly
+        // upgrade every registered dispatcher, so allow those to finish.
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+        while weak.upgrade().is_some() {
+            assert!(
+                std::time::Instant::now() < deadline,
+                "The layer must not keep its dispatcher alive"
+            );
+            std::thread::yield_now();
+        }
     }
 
     #[test]
@@ -223,6 +261,63 @@ mod tests {
             },
             true,
         );
+    }
+
+    #[test]
+    fn span_stop_strings_include_the_parent_span_id() {
+        let dispatch = Dispatch::new(
+            tracing_subscriber::registry()
+                .with(
+                    LayerBuilder::new_common_schema_events("OtelParent")
+                        .__build_for_test()
+                        .unwrap(),
+                )
+                .with(tracing_opentelemetry::layer()),
+        );
+        let layer = dispatch
+            .downcast_ref::<_EtwTracingSubscriber<CommonSchemaOutput, tracing_subscriber::Registry>>()
+            .unwrap();
+        tracing::dispatcher::with_default(&dispatch, || {
+            let parent = tracing::info_span!("OtelParent");
+            let remote = SpanContext::new(
+                TraceId::from(0x1234),
+                SpanId::from(0x5678),
+                TraceFlags::SAMPLED,
+                true,
+                TraceState::default(),
+            );
+            parent
+                .set_parent(Context::new().with_remote_span_context(remote))
+                .unwrap();
+            let child = tracing::info_span!(parent: &parent, "OtelChild");
+            let parent_id = parent.id().unwrap();
+            let child_id = child.id().unwrap();
+            // Without a parent valid OpenTelemetry context, use the local ID.
+            let local = tracing::info_span!(parent: None, "OtelLocalParent");
+            let local_id = local.id().unwrap();
+
+            tracing::dispatcher::with_default(&Dispatch::none(), || {
+                let strings = layer
+                    .get_otel_span_stop_strings(&child_id, || Some(parent_id.clone()))
+                    .expect("A valid OpenTelemetry context is available");
+                assert_eq!(&strings.trace_id, b"00000000000000000000000000001234");
+                let parent_strings = layer.get_otel_span_strings(Some(&parent_id)).unwrap();
+                assert_eq!(strings.parent_span_id, Some(parent_strings.span_id));
+
+                let strings = layer
+                    .get_otel_span_stop_strings(&child_id, || Some(local_id.clone()))
+                    .unwrap();
+                assert_eq!(
+                    strings.parent_span_id,
+                    Some(crate::native::to_hex_utf8_bytes(local_id.into_u64()))
+                );
+
+                let strings = layer
+                    .get_otel_span_stop_strings(&child_id, || None)
+                    .unwrap();
+                assert!(strings.parent_span_id.is_none());
+            });
+        });
     }
 
     #[test]

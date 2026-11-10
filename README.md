@@ -22,9 +22,12 @@ events are emitted.
 ## Standalone subscriber
 
 The default `std` feature enables integration with `tracing-subscriber`'s span
-registry. With `default-features = false`, `LayerBuilder::build()` instead
-constructs a standalone `tracing::Subscriber`; `build_subscriber()` explicitly
-selects this implementation with either feature configuration.
+registry through `LayerBuilder::build()` / `build_layer()`. These registry
+builders are only available with `std`. `LayerBuilder::build_subscriber()`
+constructs a standalone `tracing::Subscriber` with either feature configuration,
+and is the builder to use when `std` is disabled. Each builder has the same
+signature regardless of features, so enabling `std` elsewhere in a dependency
+graph does not change the meaning of existing calls.
 
 The standalone subscriber tracks entered spans per thread and subscriber,
 including nested and repeated entries. Span clones, entered spans, and live
@@ -40,11 +43,11 @@ select the standalone-only configuration.
 
 ```toml
 [dependencies]
-tracing-etw = { version = "0.3", default-features = false }
+tracing-etw = { version = "0.4", default-features = false }
 tracing = { version = "0.1", default-features = false }
 ```
 
-Use `LayerBuilder::build()` or `build_subscriber()` and install the subscriber
+Use `LayerBuilder::build_subscriber()` and install the subscriber
 with `tracing::subscriber::set_global_default`. A no-std executable must also
 provide its panic handler and native startup, in addition to an allocator.
 Neither `tracing-subscriber` nor OpenTelemetry is required in this configuration.
@@ -57,7 +60,14 @@ deletion. FLS callbacks run outside the loader lock, so cleanup that waits on
 span locks does not stall thread creation or DLL loading. Recursive
 initialization and access during destruction panic.
 Native keys live for the process lifetime; per-thread values are freed at
-exit. With `std`, standard-library thread-local storage is unchanged.
+exit. Because the keys and their cleanup callbacks are never unregistered,
+the `no_std` backends must not be used from a DLL or shared object that can
+be unloaded (`FreeLibrary` / `dlclose`) while threads that logged are still
+running; the OS would later invoke the callback in unmapped code.
+With `std`, standard-library thread-local storage is used. On Windows,
+standard-library thread-exit destructors may run under the loader lock, so
+spans still entered when a thread exits are queued without locking and
+released by a later `new_span` or `try_close` call on any thread.
 Cleanup follows native thread/fiber teardown; process termination does not
 guarantee that destructors run.
 Native keys are published atomically after initialization, so subsequent key
@@ -149,6 +159,34 @@ Other targets retain the no-op exporter and do not emit timestamps.
 ## MSV
 
 Minimum supported Rust version is 1.85 (edition 2024).
+
+## Breaking Changes
+
+Breaking changes between released versions, and how to resolve them. Add an
+entry here for every release that breaks existing consumers.
+
+### 0.3 to 0.4
+
+- **Minimum supported Rust version is now 1.85** (edition 2024, previously 1.82).
+  Update the toolchain.
+- **New default features: `std` and `opentelemetry`.** 0.3 had no default
+  features. The registry-backed builders (`build()`, `build_layer()`,
+  `build_with_target()`), `EtwFilter`, and
+  `tracing-subscriber` integration now require `std`. Dependents that set
+  `default-features = false` must add `features = ["std"]` (and
+  `"opentelemetry"` if needed) to keep using `tracing-subscriber` layers, or
+  switch to `LayerBuilder::build_subscriber()` for the standalone subscriber.
+- **The `global_filter` feature and `LayerBuilder::build_global_filter()` were
+  removed.** Remove the feature from `Cargo.toml` and replace
+  `build_global_filter()` with `build()` (or `build_with_target()`). These apply
+  ETW/user_events enablement as a per-layer filter, so events that are not
+  enabled by a collector are skipped by the ETW layer only; other layers in the
+  subscriber are no longer filtered by ETW/user_events enablement. Add your own
+  filters to those layers if they relied on it.
+- **OpenTelemetry integration requires `tracing-opentelemetry` 0.34** (previously
+  0.32) and `opentelemetry` 0.33. Update those dependencies to matching versions
+  so span contexts are found.
+- **Linux requires `eventheader` / `eventheader_dynamic` 0.5 or later.**
 
 ## ETW benchmarks
 

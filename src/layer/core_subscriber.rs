@@ -36,6 +36,78 @@ struct ThreadState {
     shard: Option<usize>,
 }
 
+// With `std`, Windows can run thread-local destructors under the loader lock
+// (older toolchains, or threads not created by std). Releasing a span can take
+// shard locks, so thread-exit cleanup must not do it there; instead, entered
+// handles are queued without locking and released by a later subscriber call.
+// Without `std`, FLS callbacks already run outside the loader lock.
+#[cfg(all(windows, feature = "std"))]
+impl Drop for ThreadState {
+    fn drop(&mut self) {
+        deferred::push(core::mem::take(&mut self.spans));
+    }
+}
+
+#[cfg(all(windows, feature = "std"))]
+pub(crate) mod deferred {
+    extern crate alloc;
+    use super::Vec;
+    use alloc::boxed::Box;
+    use core::{
+        ptr,
+        sync::atomic::{AtomicPtr, Ordering},
+    };
+
+    use crate::layer::common::SpanHandle;
+
+    struct Node {
+        // Held only to be dropped by release().
+        _spans: Vec<SpanHandle>,
+        next: *mut Node,
+    }
+
+    static PENDING: AtomicPtr<Node> = AtomicPtr::new(ptr::null_mut());
+
+    pub(super) fn push(spans: Vec<SpanHandle>) {
+        if spans.is_empty() {
+            return;
+        }
+        let node = Box::into_raw(Box::new(Node {
+            _spans: spans,
+            next: ptr::null_mut(),
+        }));
+        let mut head = PENDING.load(Ordering::Relaxed);
+        loop {
+            // SAFETY: The node is not published until the exchange succeeds.
+            unsafe { (*node).next = head };
+            match PENDING.compare_exchange_weak(head, node, Ordering::Release, Ordering::Relaxed) {
+                Ok(_) => return,
+                Err(current) => head = current,
+            }
+        }
+    }
+
+    // Releases handles queued by exited threads. Must not be called while
+    // holding a shard lock or a THREAD_STATE borrow. Unit tests hold raw shard
+    // guards while calling subscriber methods, so they release explicitly
+    // instead of from new_span/try_close.
+    #[inline]
+    pub(crate) fn release() {
+        if PENDING.load(Ordering::Relaxed).is_null() {
+            return;
+        }
+        // Taking the whole list avoids ABA hazards; nodes are only freed here.
+        let mut node = PENDING.swap(ptr::null_mut(), Ordering::Acquire);
+        while !node.is_null() {
+            // SAFETY: Nodes come from Box::into_raw in push, and the swap
+            // transferred exclusive ownership of the whole list to this call.
+            let current = unsafe { Box::from_raw(node) };
+            node = current.next;
+            drop(current);
+        }
+    }
+}
+
 impl ThreadState {
     fn current_span_context(&self, subscriber_id: u64) -> Option<common::SpanContext> {
         self.spans
@@ -130,6 +202,8 @@ where
     }
 
     fn new_span(&self, attrs: &tracing_core::span::Attributes<'_>) -> tracing_core::span::Id {
+        #[cfg(all(windows, feature = "std", not(test)))]
+        deferred::release();
         let (shard, parent) = THREAD_STATE.with(|state| {
             let mut state = state.entered.borrow_mut();
             let shard = *state.shard.get_or_insert_with(common::next_span_shard);
@@ -152,6 +226,8 @@ where
     }
 
     fn try_close(&self, id: tracing_core::span::Id) -> bool {
+        #[cfg(all(windows, feature = "std", not(test)))]
+        deferred::release();
         common::release_span(self.subscriber_id, &id)
     }
 
@@ -465,10 +541,7 @@ mod tests {
     #[test]
     fn releases_the_entered_reference_if_tls_access_panics() {
         let builder = crate::LayerBuilder::new("FailedEnterTests");
-        #[cfg(feature = "std")]
         let subscriber = builder.build_subscriber().unwrap();
-        #[cfg(not(feature = "std"))]
-        let subscriber = builder.build().unwrap();
         let metadata = tracing::callsite! {
             name: "failed span entry",
             kind: tracing::metadata::Kind::SPAN,

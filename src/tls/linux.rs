@@ -1,6 +1,11 @@
 use core::{ffi::c_void, mem::MaybeUninit};
 
 // Keys are process-lifetime: deleting one would strand other threads' values.
+//
+// Each key registers a destructor in this module. Keys are never deleted, so
+// this backend must not be used from a shared object that can be unloaded with
+// dlclose while threads that logged are still running: glibc would later call
+// the destructor in unmapped code at thread exit.
 pub(super) struct Key(libc::pthread_key_t);
 
 impl Key {

@@ -36,7 +36,7 @@ jobs:
     - name: Run tests
       run: cargo test --verbose
     - name: Run standalone subscriber tests
-      run: cargo test --no-default-features
+      run: cargo test --no-default-features --lib --tests
     - name: Run isolated no-std consumer
       working-directory: tests/no_std
       run: cargo run --release
@@ -56,7 +56,7 @@ jobs:
       - name: Run tests
         run: cargo test --verbose
       - name: Run standalone subscriber tests
-        run: cargo test --no-default-features
+        run: cargo test --no-default-features --lib --tests
       - name: Run isolated no-std consumer
         working-directory: tests/no_std
         run: cargo run --release

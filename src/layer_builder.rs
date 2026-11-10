@@ -205,6 +205,25 @@ impl<OutMode: OutputMode + 'static> LayerBuilder<OutMode> {
         })
     }
 
+    fn new_tracing_subscriber<S>(&self) -> _EtwTracingSubscriber<OutMode, S>
+    where
+        crate::native::Provider<OutMode>: ProviderTraits,
+    {
+        _EtwTracingSubscriber {
+            provider: crate::native::Provider::<OutMode>::new(
+                &self.provider_name,
+                &self.provider_id,
+                &self.provider_group,
+                self.default_keyword,
+            ),
+            default_keyword: self.default_keyword,
+            subscriber_id: crate::layer::core_subscriber::next_id(),
+            #[cfg(feature = "opentelemetry")]
+            dispatch: Default::default(),
+            _p: PhantomData,
+        }
+    }
+
     #[cfg(feature = "std")]
     fn build_target_filter(&self, target: &'static str) -> Targets {
         let mut targets = Targets::new().with_target(&*self.provider_name, LevelFilter::TRACE);
@@ -234,7 +253,7 @@ impl<OutMode: OutputMode + 'static> LayerBuilder<OutMode> {
     /// ```
     /// # use tracing_subscriber::prelude::*;
     /// # let reg = tracing_subscriber::registry();
-    /// let built_layer = tracing_etw::LayerBuilder::new("SampleProviderName").build();
+    /// let built_layer = tracing_etw::LayerBuilder::new("SampleProviderName").build_layer();
     /// assert!(built_layer.is_ok());
     /// # reg.with(built_layer.unwrap());
     /// ```
@@ -251,19 +270,7 @@ impl<OutMode: OutputMode + 'static> LayerBuilder<OutMode> {
     {
         self.validate_config()?;
 
-        let layer = _EtwTracingSubscriber::<OutMode, S> {
-            provider: crate::native::Provider::<OutMode>::new(
-                &self.provider_name,
-                &self.provider_id,
-                &self.provider_group,
-                self.default_keyword,
-            ),
-            default_keyword: self.default_keyword,
-            subscriber_id: crate::layer::core_subscriber::next_id(),
-            #[cfg(feature = "opentelemetry")]
-            dispatch: Default::default(),
-            _p: PhantomData,
-        };
+        let layer = self.new_tracing_subscriber::<S>();
 
         let filter = self.build_filter(layer.clone());
 
@@ -279,7 +286,7 @@ impl<OutMode: OutputMode + 'static> LayerBuilder<OutMode> {
     /// and reference-counted span lifetime, including retaining parents of live children.
     ///
     /// It checks native provider enablement directly, without per-layer filtering.
-    /// Disabling the crate's `std` feature selects this implementation in `build()`,
+    /// This is the only builder available when the crate's `std` feature is disabled,
     /// using `no_std + alloc` with native operating-system services on Windows
     /// and Linux. Other targets retain a standard-library-backed no-op exporter.
     ///
@@ -297,32 +304,26 @@ impl<OutMode: OutputMode + 'static> LayerBuilder<OutMode> {
     {
         self.validate_config()?;
 
-        Ok(_EtwTracingSubscriber {
-            provider: crate::native::Provider::<OutMode>::new(
-                &self.provider_name,
-                &self.provider_id,
-                &self.provider_group,
-                self.default_keyword,
-            ),
-            default_keyword: self.default_keyword,
-            subscriber_id: crate::layer::core_subscriber::next_id(),
-            #[cfg(feature = "opentelemetry")]
-            dispatch: Default::default(),
-            _p: PhantomData,
-        })
+        Ok(self.new_tracing_subscriber())
     }
 
-    /// Constructs a standalone subscriber, equivalent to [Self::build_subscriber].
-    #[allow(clippy::type_complexity)]
-    #[cfg_attr(docsrs, doc(cfg(not(feature = "std"))))]
-    #[cfg(not(feature = "std"))]
-    pub fn build(self) -> Result<_EtwTracingSubscriber<OutMode>, EtwError>
-    where
-        crate::native::Provider<OutMode>: ProviderTraits + EventWriter<OutMode>,
-    {
-        self.build_subscriber()
-    }
-
+    /// Constructs a [tracing_subscriber::Layer] implementation, equivalent to [Self::build_layer].
+    ///
+    /// This layer includes a [tracing_subscriber::layer::Filter] that reports to `tracing` when
+    /// an event is enabled to a ETW/user_events collector. Disabled events can then be more
+    /// efficiently skipped over.
+    ///
+    /// This method requires the `std` feature. Use [Self::build_subscriber] to construct
+    /// the standalone subscriber in either feature configuration.
+    ///
+    /// ```
+    /// # use tracing_subscriber::prelude::*;
+    /// # let reg = tracing_subscriber::registry();
+    /// let built_layer = tracing_etw::LayerBuilder::new("SampleProviderName").build();
+    /// assert!(built_layer.is_ok());
+    /// # reg.with(built_layer.unwrap());
+    /// ```
+    ///
     #[allow(clippy::type_complexity)]
     #[cfg_attr(docsrs, doc(cfg(feature = "std")))]
     #[cfg(feature = "std")]
@@ -373,19 +374,7 @@ impl<OutMode: OutputMode + 'static> LayerBuilder<OutMode> {
     {
         self.validate_config()?;
 
-        let layer = _EtwTracingSubscriber::<OutMode, S> {
-            provider: crate::native::Provider::<OutMode>::new(
-                &self.provider_name,
-                &self.provider_id,
-                &self.provider_group,
-                self.default_keyword,
-            ),
-            default_keyword: self.default_keyword,
-            subscriber_id: crate::layer::core_subscriber::next_id(),
-            #[cfg(feature = "opentelemetry")]
-            dispatch: Default::default(),
-            _p: PhantomData,
-        };
+        let layer = self.new_tracing_subscriber::<S>();
 
         let filter = self.build_filter(layer.clone());
 
@@ -394,7 +383,7 @@ impl<OutMode: OutputMode + 'static> LayerBuilder<OutMode> {
         Ok(layer.with_filter(filter.and(targets)))
     }
 
-    // Private. For integration tests only. Builds a layer implemention without a filter.
+    // Private. For integration tests only. Builds a layer implementation without a filter.
     // Serves absolutely no purposes outside of making testing easier.
     #[doc(hidden)]
     #[allow(clippy::type_complexity)]
@@ -407,23 +396,9 @@ impl<OutMode: OutputMode + 'static> LayerBuilder<OutMode> {
     {
         self.validate_config()?;
 
-        let layer = _EtwTracingSubscriber::<OutMode, S> {
-            provider: crate::native::Provider::<OutMode>::new(
-                &self.provider_name,
-                &self.provider_id,
-                &self.provider_group,
-                self.default_keyword,
-            ),
-            default_keyword: self.default_keyword,
-            subscriber_id: crate::layer::core_subscriber::next_id(),
-            #[cfg(feature = "opentelemetry")]
-            dispatch: Default::default(),
-            _p: PhantomData,
-        };
-
         // By skipping the adding the filter, we can avoid the enablement checks and
         // ensure the code is actually being run and writing an event, without needing
         // to set up an external listener.
-        Ok(layer)
+        Ok(self.new_tracing_subscriber())
     }
 }

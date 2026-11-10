@@ -83,12 +83,15 @@ impl<T> LocalKey<T> {
         if value.is_null() {
             key.set(BUSY);
             let reset = ResetSlot(key);
-            let initialized = Box::new(Value {
+            let initialized = Box::into_raw(Box::new(Value {
                 key,
                 value: (self.initialize)(),
-            });
-            key.set(ptr::from_ref(&*initialized).cast_mut().cast());
-            value = Box::into_raw(initialized).cast();
+            }));
+            // Store the pointer from into_raw, so later reads and the native
+            // destructor's Box::from_raw use its write provenance. If set()
+            // panics, the allocation leaks and ResetSlot clears the slot.
+            key.set(initialized.cast());
+            value = initialized.cast();
             core::mem::forget(reset);
         }
         // SAFETY: Only this thread/fiber can access its slot. The allocation

@@ -5,6 +5,15 @@ use windows_sys::Win32::{
 };
 
 // Keys are process-lifetime: freeing one would invalidate other threads' slots.
+//
+// Each key registers a cleanup callback in this module. Keys are never freed,
+// so this backend must not be used from a DLL that can be unloaded with
+// FreeLibrary while threads or fibers that logged are still running: Windows
+// would later invoke the callback in unmapped code.
+//
+// FLS calls may overwrite the calling thread's Win32 last-error code (e.g.
+// FlsGetValue on a fiber without FLS data). Do not save/restore it around
+// these calls: it is a significant cost on every logging call for no value.
 pub(super) struct Key(u32);
 
 impl Key {

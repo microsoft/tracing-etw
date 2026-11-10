@@ -21,6 +21,7 @@ pub(crate) fn get_otel_span_data(id: &Id, dispatch: &Dispatch) -> Option<OtelSpa
     let mut ctx = OtelSpanStrings {
         trace_id: [0u8; 32],
         span_id: [0u8; 16],
+        // Callers that emit parent IDs resolve the parent span separately.
         parent_span_id: None,
     };
     write!(

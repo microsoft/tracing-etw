@@ -95,7 +95,11 @@ fn exercise_subscriber(subscriber: impl Subscriber) {
 }
 
 fn exercise() {
-    exercise_subscriber(exporter::LayerBuilder::new("NoStdNormal").build().unwrap());
+    exercise_subscriber(
+        exporter::LayerBuilder::new("NoStdNormal")
+            .build_subscriber()
+            .unwrap(),
+    );
     exercise_subscriber(
         exporter::LayerBuilder::new_common_schema_events("NoStdCommonSchema")
             .build_subscriber()
@@ -130,7 +134,7 @@ pub extern "C" fn main() -> i32 {
                 0x2bd01356_123d_45bb_b99b_9d7ec39e4954,
             ))
             .with_provider_group(group)
-            .build()
+            .build_subscriber()
             .unwrap();
     trace::subscriber::set_global_default(subscriber).unwrap();
     #[cfg(target_os = "linux")]

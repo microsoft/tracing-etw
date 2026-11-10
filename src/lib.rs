@@ -51,16 +51,26 @@
 //!
 //! ```toml
 //! [dependencies]
-//! tracing-etw = { version = "0.3", default-features = false }
+//! tracing-etw = { version = "0.4", default-features = false }
 //! tracing = { version = "0.1", default-features = false }
 //! ```
 //!
-//! Without `std`, [LayerBuilder::build] constructs the standalone subscriber;
-//! [LayerBuilder::build_subscriber] explicitly selects it in either configuration.
+//! [LayerBuilder::build_subscriber] constructs the standalone subscriber in either
+//! configuration, and is the builder to use without `std`; the registry-backed
+//! `build()`, `build_layer()`, and `build_with_target()` require `std`. Builder signatures do not depend on features, so enabling `std`
+//! elsewhere in a dependency graph does not change existing calls.
 //! Install it with `tracing::subscriber::set_global_default`. Span context and
 //! event builders use native thread-local storage with exit cleanup (fiber-local
 //! storage on Windows). No-std executables supply their own panic handler and
 //! native startup, as well as their allocator.
+//!
+//! The native thread-local keys and their cleanup callbacks are never
+//! unregistered. Without `std`, this crate must not be used from a DLL or shared
+//! object that can be unloaded (`FreeLibrary` / `dlclose`) while threads that
+//! logged are still running, as the OS would later invoke the callback in
+//! unmapped code.
+//!
+//! See the README's Breaking Changes section for migration steps between versions.
 //!
 //! ## Example
 //!
@@ -143,26 +153,19 @@
 //! - Each `tracing-etw::Layer` that is added will heap allocate some internal state
 //!   when `build` is called.
 //!
-//! - Logging events with the [Debug][core::fmt::Debug] format specifier (`:?`) will
-//!   necessitate a heap allocation to format the value into a string.
+//! - Event fields formatted with the [Debug][core::fmt::Debug] format specifier (`:?`),
+//!   including every event message (which `tracing` presents as a debug format), are
+//!   formatted into a 512-byte stack buffer and copied directly into the event builder.
+//!   Only values that format to more than 512 bytes spill to a heap allocation.
 //!
-//! <div class="warning">
-//!
-//! All event messages (the format strings to the event) are, for reasons
-//! outside of the control of this crate, formatted as debug formats rather than as
-//! a string. This effectively means every single event is forced to perform at least
-//! one heap allocation. In benchmarking, this does not seem to be a major performance issue.
-//!
-//! </div>
-//!
-//! - Logging strings copies them to the heap first. This is a side-effect of how
-//!   `tracing` presents the strings to each layer; the lifetime of the string is
-//!   too short for what this crate currently needs, but it may be possible to improve
-//!   this in the future.
+//! - Event string fields are borrowed and copied directly into the event builder,
+//!   without an intermediate heap copy.
 //!
 //! - Logging a span allocates a copy of the span's fields on the heap. This is needed
 //!   so the values can be updated during execution and the final payload values logged
-//!   when the span ends. This allocation is freed when the span ends.
+//!   when the span ends. Span string and `Debug` fields are therefore converted to owned
+//!   strings (formatted on the stack first, then copied into an exactly sized allocation).
+//!   This allocation is freed when the span ends.
 //!
 //! - The first time an event is logged (the event is enabled at the platform layer and
 //!   the logging code is run), this crate will scan the binary for any metadata left

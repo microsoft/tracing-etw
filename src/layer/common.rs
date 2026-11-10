@@ -827,10 +827,7 @@ mod tests {
 
     pub(super) fn new_subscriber() -> _EtwTracingSubscriber<NormalOutput> {
         let builder = LayerBuilder::new("StandaloneSpanTests");
-        #[cfg(feature = "std")]
         let subscriber = builder.build_subscriber();
-        #[cfg(not(feature = "std"))]
-        let subscriber = builder.build();
         subscriber.unwrap()
     }
 
@@ -842,6 +839,23 @@ mod tests {
             Parent::Explicit(parent) => Attributes::child_of(parent.clone(), &META, &values),
         };
         subscriber.new_span(&attrs)
+    }
+
+    // Thread-exit cleanup may queue releases (std on Windows), and a concurrent
+    // test may already be applying them, so wait for this span's release.
+    fn released_after_thread_exit(subscriber_id: u64, id: &Id) -> bool {
+        let deadline = std::time::Instant::now() + Duration::from_secs(5);
+        loop {
+            #[cfg(all(windows, feature = "std"))]
+            crate::layer::core_subscriber::deferred::release();
+            if !contains(subscriber_id, id) {
+                return true;
+            }
+            if std::time::Instant::now() >= deadline {
+                return false;
+            }
+            std::thread::yield_now();
+        }
     }
 
     pub(super) fn contains(subscriber_id: u64, id: &Id) -> bool {
@@ -1476,7 +1490,7 @@ mod tests {
             starter.join().unwrap();
             result.expect("Thread-exit cleanup must not block other threads from starting");
         });
-        assert!(!contains(subscriber.subscriber_id, &id));
+        assert!(released_after_thread_exit(subscriber.subscriber_id, &id));
     }
 
     #[test]
@@ -1494,7 +1508,7 @@ mod tests {
                     .join();
                 assert_eq!(result.is_err(), should_panic);
             });
-            assert!(!contains(subscriber.subscriber_id, &id));
+            assert!(released_after_thread_exit(subscriber.subscriber_id, &id));
         }
     }
 

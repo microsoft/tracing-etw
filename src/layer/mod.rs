@@ -49,6 +49,8 @@ impl<OutMode: OutputMode, S> Clone for _EtwTracingSubscriber<OutMode, S> {
         _EtwTracingSubscriber {
             provider: self.provider.clone(),
             default_keyword: self.default_keyword,
+            // Standalone subscriber clones intentionally share span storage.
+            // Registry layers receive a new identity when attached (on_layer).
             subscriber_id: self.subscriber_id,
             // A cloned layer captures its own dispatch when registered.
             #[cfg(feature = "opentelemetry")]

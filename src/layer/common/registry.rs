@@ -202,7 +202,14 @@ pub(crate) fn release_span(subscriber_id: u64, id: &tracing::span::Id) -> bool {
             let mut spans = shard(lookup).write();
             let mut entry = match lookup.entry(&mut spans) {
                 RawEntryMut::Occupied(entry) => entry,
-                RawEntryMut::Vacant(_) => panic!("Close of an unrecognized span"),
+                RawEntryMut::Vacant(_) => {
+                    // A layer can see closes for spans it never saw created,
+                    // e.g. after tracing_subscriber::reload. Close runs from
+                    // Span::drop, so ignore it rather than panicking.
+                    drop(spans);
+                    debug_assert!(false, "Close of an unrecognized span");
+                    return closed;
+                }
             };
             let span = entry.get_mut();
             span.references = span
@@ -322,10 +329,12 @@ mod tests {
     use super::*;
     use crate::{
         LayerBuilder,
+        layer::_EtwTracingSubscriber,
         layer::common::{
             self as standalone,
             tests::{LOCK_PROBES, META, RecordingWriter, new_subscriber},
         },
+        native::NormalOutput,
     };
     use std::{sync::mpsc, time::Duration};
     use tracing::{
@@ -339,6 +348,121 @@ mod tests {
     fn contains(subscriber_id: u64, id: &Id) -> bool {
         let key = (subscriber_id, id.clone());
         shard(SpanLookup::new(&key)).read().spans.contains_key(&key)
+    }
+
+    // Layers receive a new storage identity when attached to a subscriber.
+    fn attached_id<Mode: OutputMode + 'static>(subscriber: &(impl Subscriber + 'static)) -> u64 {
+        (subscriber as &dyn Subscriber)
+            .downcast_ref::<_EtwTracingSubscriber<Mode, tracing_subscriber::Registry>>()
+            .expect("The layer is attached to a registry")
+            .subscriber_id
+    }
+
+    fn parent_span_id(subscriber_id: u64, id: &Id) -> Option<NonZeroU64> {
+        let key = (subscriber_id, id.clone());
+        shard(SpanLookup::new(&key)).read().spans[&key]
+            .ids
+            .parent_span_id
+    }
+
+    #[test]
+    fn closing_an_unrecognized_span_is_ignored() {
+        let id = Id::from_u64(u64::MAX);
+        let result = std::panic::catch_unwind(|| release_span(u64::MAX, &id));
+        // Debug builds flag the unexpected close; release builds ignore it.
+        assert_eq!(result.is_err(), cfg!(debug_assertions));
+        if let Ok(closed) = result {
+            assert!(!closed);
+        }
+    }
+
+    #[test]
+    fn layer_clones_attached_to_separate_registries_use_separate_storage() {
+        let layer = LayerBuilder::new("RegistryCloneTests")
+            .__build_for_test()
+            .unwrap();
+        let built_id = layer.subscriber_id;
+        let first = tracing_subscriber::registry().with(layer.clone());
+        let second = tracing_subscriber::registry().with(layer);
+        let first_id = attached_id::<NormalOutput>(&first);
+        let second_id = attached_id::<NormalOutput>(&second);
+        assert_ne!(first_id, second_id);
+        assert_ne!(first_id, built_id);
+
+        // Both registries allocate the same first span ID.
+        let first_span = tracing::subscriber::with_default(first, || {
+            let span = tracing::info_span!("first", value = 1u64);
+            let id = span.id().unwrap();
+            assert!(contains(first_id, &id));
+            assert!(!contains(second_id, &id));
+            (span, id)
+        });
+        tracing::subscriber::with_default(second, || {
+            let span = tracing::info_span!("second", value = 2u64);
+            let id = span.id().unwrap();
+            assert_eq!(id, first_span.1);
+            let key = (first_id, id.clone());
+            assert_eq!(
+                SpanLookup::new(&key)
+                    .payload()
+                    .unwrap()
+                    .read()
+                    .metadata
+                    .name(),
+                "first"
+            );
+            let key = (second_id, id.clone());
+            assert_eq!(
+                SpanLookup::new(&key)
+                    .payload()
+                    .unwrap()
+                    .read()
+                    .metadata
+                    .name(),
+                "second"
+            );
+            drop(span);
+            assert!(!contains(second_id, &id));
+            assert!(contains(first_id, &id));
+        });
+    }
+
+    #[test]
+    fn contextual_parents_come_from_registry_ancestry() {
+        use tracing_subscriber::filter::filter_fn;
+
+        // Another layer enables every span, so the registry creates spans
+        // that are disabled only for the ETW layer.
+        struct EnableAll;
+        impl<S: Subscriber> tracing_subscriber::Layer<S> for EnableAll {}
+
+        let layer = LayerBuilder::new("RegistryAncestryTests")
+            .__build_for_test()
+            .unwrap()
+            .with_filter(filter_fn(|metadata| metadata.name() != "disabled"));
+        let registry = tracing_subscriber::registry().with(layer).with(EnableAll);
+        let subscriber_id = attached_id::<NormalOutput>(&registry);
+        tracing::subscriber::with_default(registry, || {
+            let enabled = tracing::info_span!(parent: None, "enabled");
+            let enabled_id = enabled.id().unwrap();
+            let _enabled = enabled.enter();
+            // An unrelated root span, disabled for this layer, is entered last.
+            let disabled = tracing::info_span!(parent: None, "disabled");
+            assert!(!disabled.is_disabled());
+            let _disabled = disabled.enter();
+            let unrelated = tracing::info_span!("unrelated");
+            let unrelated_id = unrelated.id().unwrap();
+            assert_eq!(parent_span_id(subscriber_id, &unrelated_id), None);
+
+            // A disabled intermediate parent is skipped in favor of its ancestor.
+            let nested_disabled = tracing::info_span!(parent: &enabled, "disabled");
+            let nested = tracing::info_span!(parent: &nested_disabled, "nested");
+            let nested_id = nested.id().unwrap();
+            assert_eq!(
+                parent_span_id(subscriber_id, &nested_id),
+                Some(enabled_id.into_non_zero_u64())
+            );
+        });
     }
 
     #[test]
@@ -409,8 +533,8 @@ mod tests {
         let layer = LayerBuilder::new("RegistryLifetimeTests")
             .__build_for_test()
             .unwrap();
-        let subscriber_id = layer.subscriber_id;
         let registry = tracing_subscriber::registry().with(layer);
+        let subscriber_id = attached_id::<NormalOutput>(&registry);
         tracing::subscriber::with_default(registry, || {
             let parent = tracing::info_span!(parent: None, "registry parent");
             let parent_id = parent.id().unwrap();
@@ -563,8 +687,8 @@ mod tests {
         let layer = LayerBuilder::new("RegistryIndependentStorage")
             .__build_for_test()
             .unwrap();
-        let subscriber_id = layer.subscriber_id;
         let registry = tracing_subscriber::registry().with(layer);
+        let subscriber_id = attached_id::<NormalOutput>(&registry);
         let metadata = tracing::callsite! {
             name: "independent registry fields",
             kind: Kind::SPAN,

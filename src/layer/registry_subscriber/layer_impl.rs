@@ -25,8 +25,9 @@ impl<OutMode: OutputMode, S> _EtwTracingSubscriber<OutMode, S> {
             // through reload::Handle::reload, or inside an Arc-shared
             // subscriber) cannot tell which registry owns a span ID, so they
             // use local span IDs rather than risk another registry's context.
+            let id = id?;
             let dispatch = self.dispatch.upgrade()?;
-            crate::otel::get_otel_span_data(id?, &dispatch)
+            crate::otel::get_otel_span_data(id, &dispatch)
         }
         #[cfg(not(feature = "opentelemetry"))]
         {

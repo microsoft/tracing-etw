@@ -21,14 +21,37 @@ impl<OutMode: OutputMode, S> _EtwTracingSubscriber<OutMode, S> {
             if !crate::native::uses_span_strings::<OutMode>() {
                 return None;
             }
-            let dispatch = self.dispatch.get()?.upgrade()?;
-            crate::otel::get_otel_span_data(id?, &dispatch)
+            let id = id?;
+            let dispatch = self.otel_dispatch(id)?;
+            crate::otel::get_otel_span_data(id, &dispatch)
         }
         #[cfg(not(feature = "opentelemetry"))]
         {
             let _ = id;
             None
         }
+    }
+
+    #[cfg(feature = "opentelemetry")]
+    fn otel_dispatch(&self, id: &span::Id) -> Option<tracing::Dispatch> {
+        if let Some(dispatch) = self.dispatch.upgrade() {
+            return Some(dispatch);
+        }
+        if !self.dispatch.is_empty() {
+            return None;
+        }
+        // reload::Handle::reload never registers the replacement layer with a
+        // dispatcher. Fall back to the current default, but only if its
+        // registry holds this span with the same callsite, so a span with the
+        // same ID in an unrelated registry is not used.
+        use tracing_subscriber::registry::LookupSpan as _;
+        let ours = registry::span_metadata(self.subscriber_id, id)?;
+        let current = tracing::dispatcher::get_default(|dispatch| dispatch.clone());
+        let matches = current
+            .downcast_ref::<tracing_subscriber::Registry>()?
+            .span(id)
+            .is_some_and(|span| core::ptr::eq(span.metadata(), ours));
+        matches.then_some(current)
     }
 
     // Span stop records also carry the parent's span ID. The child and parent
@@ -72,7 +95,7 @@ where
 {
     fn on_register_dispatch(&self, _collector: &tracing::Dispatch) {
         #[cfg(feature = "opentelemetry")]
-        self.dispatch.get_or_init(|| _collector.downgrade());
+        self.dispatch.register(_collector);
     }
 
     fn on_layer(&mut self, _subscriber: &mut S) {
@@ -80,6 +103,7 @@ where
         // needs its own storage identity. Clones attached to different
         // registries would otherwise share span data for colliding IDs.
         self.subscriber_id = crate::layer::core_subscriber::next_id();
+        *self.attached.get_mut() = true;
     }
 
     fn on_event(&self, event: &tracing::Event<'_>, ctx: tracing_subscriber::layer::Context<'_, S>) {
@@ -118,6 +142,9 @@ where
             .span(id)
             .and_then(|span| span.parent())
             .map(|parent| parent.id());
+        // Layers installed through reload::Handle::reload never see on_layer.
+        self.attached
+            .store(true, core::sync::atomic::Ordering::Relaxed);
         registry::create_span_data_for_new_span(self.subscriber_id, attrs, id, parent.as_ref())
     }
 
@@ -153,9 +180,9 @@ where
         )
     }
 
+    // Callbacks for spans created before this layer was attached (for example
+    // through tracing_subscriber::reload) are unknown and ignored.
     fn on_close(&self, id: span::Id, _ctx: tracing_subscriber::layer::Context<'_, S>) {
-        // Spans created before this layer was attached (for example through
-        // tracing_subscriber::reload) are unknown and ignored.
         let _ = registry::release_span(self.subscriber_id, &id);
     }
 
@@ -237,7 +264,7 @@ mod tests {
                 &tracing::valueset!(metadata.fields(), value = 1),
             ));
         });
-        let weak = layer.dispatch.get().unwrap().clone();
+        let weak = layer.dispatch.registered()[0].clone();
         drop(span);
         drop(dispatch);
         // Concurrent callsite-interest rebuilds in other tests can briefly
@@ -331,6 +358,103 @@ mod tests {
                     .get_otel_span_stop_strings(&child_id, || None)
                     .unwrap();
                 assert!(strings.parent_span_id.is_none());
+            });
+        });
+    }
+
+    fn remote_parent() -> Context {
+        Context::new().with_remote_span_context(SpanContext::new(
+            TraceId::from(0x1234),
+            SpanId::from(0x5678),
+            TraceFlags::SAMPLED,
+            true,
+            TraceState::default(),
+        ))
+    }
+
+    #[test]
+    fn registered_dispatches_fall_back_to_any_live_dispatch() {
+        let dispatches = crate::layer::registry_subscriber::Dispatches::default();
+        assert!(dispatches.is_empty() && dispatches.upgrade().is_none());
+        let first = Dispatch::new(tracing_subscriber::registry());
+        let second = Dispatch::new(tracing_subscriber::registry());
+        dispatches.register(&first);
+        dispatches.register(&second);
+        drop(first);
+        let live = dispatches.upgrade().expect("The second dispatch is alive");
+        assert!(
+            live.downcast_ref::<tracing_subscriber::Registry>()
+                .is_some()
+        );
+        drop((live, second));
+        assert!(!dispatches.is_empty() && dispatches.upgrade().is_none());
+    }
+
+    // tracing-core's `Arc<S>` subscriber does not forward on_register_dispatch,
+    // so an Arc-shared subscriber relies on the current-dispatch fallback.
+    #[test]
+    fn arc_shared_subscriber_resolves_context_from_the_current_dispatch() {
+        let subscriber = std::sync::Arc::new(
+            tracing_subscriber::registry()
+                .with(
+                    LayerBuilder::new_common_schema_events("OtelShared")
+                        .__build_for_test()
+                        .unwrap(),
+                )
+                .with(tracing_opentelemetry::layer()),
+        );
+        let first = Dispatch::new(subscriber.clone());
+        let second = Dispatch::new(subscriber.clone());
+        drop(first);
+        let layer = subscriber
+            .downcast_ref::<_EtwTracingSubscriber<CommonSchemaOutput, tracing_subscriber::Registry>>()
+            .unwrap();
+        tracing::dispatcher::with_default(&second, || {
+            let span = tracing::info_span!("OtelShared");
+            span.set_parent(remote_parent()).unwrap();
+            let strings = layer
+                .get_otel_span_strings(span.id().as_ref())
+                .expect("The second dispatch is still alive");
+            assert_eq!(&strings.trace_id, b"00000000000000000000000000001234");
+        });
+    }
+
+    #[test]
+    fn reloaded_layer_uses_the_current_dispatch_for_its_own_spans() {
+        let (reloadable, handle) = tracing_subscriber::reload::Layer::new(
+            LayerBuilder::new_common_schema_events("OtelReloadInitial")
+                .__build_for_test()
+                .unwrap(),
+        );
+        let dispatch = Dispatch::new(
+            tracing_subscriber::registry()
+                .with(reloadable)
+                .with(tracing_opentelemetry::layer()),
+        );
+        let replacement = LayerBuilder::new_common_schema_events("OtelReloadReplacement")
+            .__build_for_test()
+            .unwrap();
+        // A clone shares the replacement's storage and, like it, is never
+        // registered with a dispatcher.
+        let probe = replacement.clone();
+        handle.reload(replacement).unwrap();
+        tracing::dispatcher::with_default(&dispatch, || {
+            let span = tracing::info_span!("OtelReloaded");
+            span.set_parent(remote_parent()).unwrap();
+            let id = span.id().unwrap();
+            let strings = probe
+                .get_otel_span_strings(Some(&id))
+                .expect("The current dispatch holds this span");
+            assert_eq!(&strings.trace_id, b"00000000000000000000000000001234");
+
+            // A different registry's span with the same ID is not used.
+            let other =
+                Dispatch::new(tracing_subscriber::registry().with(tracing_opentelemetry::layer()));
+            tracing::dispatcher::with_default(&other, || {
+                let unrelated = tracing::info_span!("OtelUnrelated");
+                unrelated.set_parent(remote_parent()).unwrap();
+                assert_eq!(unrelated.id(), Some(id.clone()));
+                assert!(probe.get_otel_span_strings(Some(&id)).is_none());
             });
         });
     }

@@ -202,14 +202,10 @@ pub(crate) fn release_span(subscriber_id: u64, id: &tracing::span::Id) -> bool {
             let mut spans = shard(lookup).write();
             let mut entry = match lookup.entry(&mut spans) {
                 RawEntryMut::Occupied(entry) => entry,
-                RawEntryMut::Vacant(_) => {
-                    // A layer can see closes for spans it never saw created,
-                    // e.g. after tracing_subscriber::reload. Close runs from
-                    // Span::drop, so ignore it rather than panicking.
-                    drop(spans);
-                    debug_assert!(false, "Close of an unrecognized span");
-                    return closed;
-                }
+                // A layer sees callbacks for spans it never saw created after
+                // tracing_subscriber::reload. Close runs from Span::drop, so
+                // ignore it rather than panicking.
+                RawEntryMut::Vacant(_) => return closed,
             };
             let span = entry.get_mut();
             span.references = span
@@ -233,6 +229,33 @@ pub(crate) fn release_span(subscriber_id: u64, id: &tracing::span::Id) -> bool {
     }
 }
 
+// Releases all span data stored for a registry layer that is being dropped.
+pub(crate) fn release_subscriber(subscriber_id: u64) {
+    for shard in &SPAN_DATA {
+        // Payloads and retained parents belong to the same subscriber, so the
+        // entries can be removed without reference-count adjustments. Drop
+        // them after unlocking the shard.
+        let released: Vec<_> = shard
+            .spans
+            .write()
+            .spans
+            .extract_if(|key, _| key.0 == subscriber_id)
+            .collect();
+        drop(released);
+    }
+}
+
+#[cfg(feature = "opentelemetry")]
+pub(crate) fn span_metadata(
+    subscriber_id: u64,
+    id: &tracing::span::Id,
+) -> Option<&'static tracing_core::Metadata<'static>> {
+    let key = (subscriber_id, id.clone());
+    SpanLookup::new(&key)
+        .payload()
+        .map(|payload| payload.read().metadata)
+}
+
 pub(crate) fn enter_span<OutMode: OutputMode>(
     subscriber_id: u64,
     id: &tracing::span::Id,
@@ -243,8 +266,8 @@ pub(crate) fn enter_span<OutMode: OutputMode>(
 ) {
     let timestamp = Timestamp::now();
     let key = (subscriber_id, id.clone());
+    // Unknown spans predate this layer (see release_span).
     let Some(payload) = SpanLookup::new(&key).payload() else {
-        debug_assert!(false, "Enter of unrecognized span");
         return;
     };
     write_span_start_data(
@@ -268,7 +291,6 @@ pub(crate) fn exit_span<OutMode: OutputMode>(
     let timestamp = Timestamp::now();
     let key = (subscriber_id, id.clone());
     let Some(payload) = SpanLookup::new(&key).payload() else {
-        debug_assert!(false, "Exit of unrecognized span");
         return;
     };
     write_span_stop(
@@ -289,7 +311,6 @@ pub(crate) fn update_span_values(
     let mut updates = SpanUpdates::new(values);
     let key = (subscriber_id, id.clone());
     let Some(payload) = SpanLookup::new(&key).payload() else {
-        debug_assert!(false, "Event on unrecognized span");
         return;
     };
     updates.apply(&mut payload.write());
@@ -366,13 +387,75 @@ mod tests {
     }
 
     #[test]
-    fn closing_an_unrecognized_span_is_ignored() {
+    fn unrecognized_spans_are_ignored() {
         let id = Id::from_u64(u64::MAX);
-        let result = std::panic::catch_unwind(|| release_span(u64::MAX, &id));
-        // Debug builds flag the unexpected close; release builds ignore it.
-        assert_eq!(result.is_err(), cfg!(debug_assertions));
-        if let Ok(closed) = result {
-            assert!(!closed);
+        let writer = RecordingWriter::default();
+        enter_span(u64::MAX, &id, Pin::new(&writer), 1, 0, None);
+        exit_span(u64::MAX, &id, Pin::new(&writer), 1, 0, None);
+        let values = META.fields().value_set(&[]);
+        update_span_values(u64::MAX, &id, &tracing::span::Record::new(&values));
+        assert!(!release_span(u64::MAX, &id));
+    }
+
+    #[test]
+    fn reloading_a_layer_releases_its_spans_and_ignores_unknown_spans() {
+        let (reloadable, handle) = tracing_subscriber::reload::Layer::new(
+            LayerBuilder::new("RegistryReload")
+                .__build_for_test()
+                .unwrap(),
+        );
+        let dispatch = tracing::Dispatch::new(tracing_subscriber::registry().with(reloadable));
+        let old_id = handle.with_current(|layer| layer.subscriber_id).unwrap();
+        tracing::dispatcher::with_default(&dispatch, || {
+            let parent = tracing::info_span!("reloaded parent");
+            let span = tracing::info_span!(parent: &parent, "reloaded", value = 1u64);
+            let (parent_id, id) = (parent.id().unwrap(), span.id().unwrap());
+            let entered = span.enter();
+            assert!(contains(old_id, &id) && contains(old_id, &parent_id));
+            handle
+                .reload(
+                    LayerBuilder::new("RegistryReloaded")
+                        .__build_for_test()
+                        .unwrap(),
+                )
+                .unwrap();
+            // The replaced layer's span data is released with it.
+            assert!(!contains(old_id, &id) && !contains(old_id, &parent_id));
+            // The replacement ignores callbacks for spans it never saw.
+            span.record("value", 2u64);
+            drop(entered);
+            drop(span);
+            drop(parent);
+        });
+    }
+
+    #[test]
+    fn dropping_an_attached_layer_releases_its_spans() {
+        let dispatch = tracing::Dispatch::new(
+            tracing_subscriber::registry().with(
+                LayerBuilder::new("RegistryDropTests")
+                    .__build_for_test()
+                    .unwrap(),
+            ),
+        );
+        let subscriber_id = dispatch
+            .downcast_ref::<_EtwTracingSubscriber<NormalOutput, tracing_subscriber::Registry>>()
+            .unwrap()
+            .subscriber_id;
+        let values = META.fields().value_set(&[]);
+        // Without a Span guard the span is never closed.
+        let id = dispatch.new_span(&Attributes::new_root(&META, &values));
+        assert!(contains(subscriber_id, &id));
+        drop(dispatch);
+        // Concurrent callsite-interest rebuilds in other tests can briefly
+        // keep the subscriber alive, so allow those to finish.
+        let deadline = std::time::Instant::now() + Duration::from_secs(5);
+        while contains(subscriber_id, &id) {
+            assert!(
+                std::time::Instant::now() < deadline,
+                "Dropping the layer must release its spans"
+            );
+            std::thread::yield_now();
         }
     }
 

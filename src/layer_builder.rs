@@ -205,6 +205,8 @@ impl<OutMode: OutputMode + 'static> LayerBuilder<OutMode> {
             subscriber_id: crate::layer::core_subscriber::next_id(),
             #[cfg(feature = "opentelemetry")]
             dispatch: Default::default(),
+            #[cfg(feature = "std")]
+            attached: Default::default(),
             _p: PhantomData,
         }
     }

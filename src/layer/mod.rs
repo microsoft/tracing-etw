@@ -16,7 +16,11 @@ pub struct _EtwTracingSubscriber<OutMode: OutputMode, S = ()> {
     pub(crate) default_keyword: u64,
     pub(crate) subscriber_id: u64,
     #[cfg(feature = "opentelemetry")]
-    pub(crate) dispatch: std::sync::OnceLock<tracing::dispatcher::WeakDispatch>,
+    pub(crate) dispatch: registry_subscriber::Dispatches,
+    // Set once this registry layer has stored span data under subscriber_id,
+    // so that dropping it releases that data.
+    #[cfg(feature = "std")]
+    pub(crate) attached: core::sync::atomic::AtomicBool,
     pub(crate) _p: PhantomData<S>,
 }
 
@@ -55,7 +59,22 @@ impl<OutMode: OutputMode, S> Clone for _EtwTracingSubscriber<OutMode, S> {
             // A cloned layer captures its own dispatch when registered.
             #[cfg(feature = "opentelemetry")]
             dispatch: Default::default(),
+            // Only the attached instance owns its stored span data.
+            #[cfg(feature = "std")]
+            attached: Default::default(),
             _p: PhantomData,
+        }
+    }
+}
+
+// A registry layer can be dropped while its spans are still alive, e.g. when
+// it is replaced through tracing_subscriber::reload. Its span data is keyed by
+// its own identity and would otherwise never be released.
+#[cfg(feature = "std")]
+impl<OutMode: OutputMode, S> Drop for _EtwTracingSubscriber<OutMode, S> {
+    fn drop(&mut self) {
+        if *self.attached.get_mut() {
+            common::registry::release_subscriber(self.subscriber_id);
         }
     }
 }

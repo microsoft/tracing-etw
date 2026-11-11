@@ -77,6 +77,7 @@
 //! This example uses the default, registry-enabled feature configuration.
 //!
 //! ```no_run
+//! # #[cfg(feature = "std")] {
 //! use tracing::{event, Level};
 //! use tracing_subscriber::{self, prelude::*};
 //!
@@ -85,6 +86,7 @@
 //!     .init();
 //!
 //! event!(Level::INFO, fieldB = b'x', fieldA = 7, "Event Message!");
+//! # }
 //! ```
 //!
 //! ## etw_event macro

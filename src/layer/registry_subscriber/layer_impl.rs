@@ -31,16 +31,31 @@ impl<OutMode: OutputMode, S> _EtwTracingSubscriber<OutMode, S> {
         }
     }
 
-    // Span stop records also carry the parent's span ID. Prefer the parent's
-    // OpenTelemetry span ID, falling back to its local span ID.
+    // Span stop records also carry the parent's span ID. The child and parent
+    // are resolved independently: the OpenTelemetry layer may track a parent
+    // but filter out the child. Each falls back to its local span ID, and the
+    // trace ID stays empty when the child has no OpenTelemetry context.
     fn get_otel_span_stop_strings(
         &self,
         id: &span::Id,
         parent: impl FnOnce() -> Option<span::Id>,
     ) -> Option<SpanStrings> {
-        let mut strings = self.get_otel_span_strings(Some(id))?;
-        strings.parent_span_id = parent().map(|parent| {
-            self.get_otel_span_strings(Some(&parent)).map_or_else(
+        if !cfg!(feature = "opentelemetry") || !crate::native::uses_span_strings::<OutMode>() {
+            return None;
+        }
+        let child = self.get_otel_span_strings(Some(id));
+        let parent = parent().map(|parent| (self.get_otel_span_strings(Some(&parent)), parent));
+        if child.is_none() && !matches!(parent, Some((Some(_), _))) {
+            // Nothing from OpenTelemetry; the stored local IDs are equivalent.
+            return None;
+        }
+        let mut strings = child.unwrap_or(SpanStrings {
+            trace_id: [0; 32],
+            span_id: crate::native::to_hex_utf8_bytes(id.into_u64()),
+            parent_span_id: None,
+        });
+        strings.parent_span_id = parent.map(|(otel, parent)| {
+            otel.map_or_else(
                 || crate::native::to_hex_utf8_bytes(parent.into_u64()),
                 |parent| parent.span_id,
             )
@@ -316,6 +331,66 @@ mod tests {
                     .get_otel_span_stop_strings(&child_id, || None)
                     .unwrap();
                 assert!(strings.parent_span_id.is_none());
+            });
+        });
+    }
+
+    #[test]
+    fn parent_otel_context_is_resolved_when_the_child_is_filtered_out() {
+        use tracing_subscriber::filter::filter_fn;
+
+        let dispatch = Dispatch::new(
+            tracing_subscriber::registry()
+                .with(
+                    LayerBuilder::new_common_schema_events("OtelFilteredChild")
+                        .__build_for_test()
+                        .unwrap(),
+                )
+                .with(
+                    tracing_opentelemetry::layer()
+                        .with_filter(filter_fn(|metadata| metadata.name() != "OtelFiltered")),
+                ),
+        );
+        let layer = dispatch
+            .downcast_ref::<_EtwTracingSubscriber<CommonSchemaOutput, tracing_subscriber::Registry>>()
+            .unwrap();
+        tracing::dispatcher::with_default(&dispatch, || {
+            let parent = tracing::info_span!("OtelTracked");
+            let remote = SpanContext::new(
+                TraceId::from(0x1234),
+                SpanId::from(0x5678),
+                TraceFlags::SAMPLED,
+                true,
+                TraceState::default(),
+            );
+            parent
+                .set_parent(Context::new().with_remote_span_context(remote))
+                .unwrap();
+            let child = tracing::info_span!(parent: &parent, "OtelFiltered");
+            let parent_id = parent.id().unwrap();
+            let child_id = child.id().unwrap();
+            let untracked = tracing::info_span!(parent: None, "OtelFiltered");
+            let untracked_id = untracked.id().unwrap();
+
+            tracing::dispatcher::with_default(&Dispatch::none(), || {
+                assert!(layer.get_otel_span_strings(Some(&child_id)).is_none());
+                let parent_strings = layer.get_otel_span_strings(Some(&parent_id)).unwrap();
+                let strings = layer
+                    .get_otel_span_stop_strings(&child_id, || Some(parent_id.clone()))
+                    .expect("The parent has an OpenTelemetry context");
+                assert_eq!(strings.trace_id, [0; 32]);
+                assert_eq!(
+                    strings.span_id,
+                    crate::native::to_hex_utf8_bytes(child_id.into_u64())
+                );
+                assert_eq!(strings.parent_span_id, Some(parent_strings.span_id));
+
+                // Neither span has a context, so the stored local IDs are used.
+                assert!(
+                    layer
+                        .get_otel_span_stop_strings(&child_id, || Some(untracked_id.clone()))
+                        .is_none()
+                );
             });
         });
     }

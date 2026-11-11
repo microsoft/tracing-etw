@@ -51,14 +51,11 @@ impl LayerBuilder<NormalOutput> {
     /// with the given name.
     ///
     /// ```
-    /// # use tracing_subscriber::prelude::*;
-    /// # let reg = tracing_subscriber::registry();
     /// # let layer =
     /// tracing_etw::LayerBuilder::new("SampleProviderName")
     /// # ;
-    /// # let built = layer.build();
+    /// # let built = layer.build_subscriber();
     /// # assert!(built.is_ok());
-    /// # reg.with(built.unwrap());
     /// ```
     ///
     #[allow(clippy::new_ret_no_self)]
@@ -82,14 +79,11 @@ impl LayerBuilder<CommonSchemaOutput> {
     /// and should not be enabled unless absolutely necessary.
     ///
     /// ```
-    /// # use tracing_subscriber::prelude::*;
-    /// # let reg = tracing_subscriber::registry();
     /// # let layer =
     /// tracing_etw::LayerBuilder::new_common_schema_events("SampleProviderName")
     /// # ;
-    /// # let built = layer.build();
+    /// # let built = layer.build_subscriber();
     /// # assert!(built.is_ok());
-    /// # reg.with(built.unwrap());
     /// ```
     ///
     pub fn new_common_schema_events(name: &str) -> LayerBuilder<CommonSchemaOutput> {
@@ -109,15 +103,12 @@ impl<OutMode: OutputMode + 'static> LayerBuilder<OutMode> {
     /// one generated from the provider name.
     ///
     /// ```
-    /// # use tracing_subscriber::prelude::*;
-    /// # let reg = tracing_subscriber::registry();
     /// # let layer =
     /// tracing_etw::LayerBuilder::new("SampleProviderName")
     ///     .with_provider_id(0x2bd01356_123d_45bb_b99b_9d7ec39e4954_u128);
     /// # assert_eq!(layer.get_provider_id().to_u128(), 0x2bd01356_123d_45bb_b99b_9d7ec39e4954_u128);
-    /// # let built = layer.build();
+    /// # let built = layer.build_subscriber();
     /// # assert!(built.is_ok());
-    /// # reg.with(built.unwrap());
     /// ```
     ///
     /// ID can be of any type that converts to [`GuidWrapper`] such as:
@@ -136,14 +127,11 @@ impl<OutMode: OutputMode + 'static> LayerBuilder<OutMode> {
     /// the standard provider name to ID algorithm.
     ///
     /// ```
-    /// # use tracing_subscriber::prelude::*;
-    /// # let reg = tracing_subscriber::registry();
     /// # let layer = tracing_etw::LayerBuilder::new("SampleProviderName");
     /// let provider_id = layer.get_provider_id();
     /// # println!("Provider GUID: {:032x}", provider_id.to_u128());
-    /// # let built = layer.build();
+    /// # let built = layer.build_subscriber();
     /// # assert!(built.is_ok());
-    /// # reg.with(built.unwrap());
     /// ```
     pub fn get_provider_id(&self) -> GuidWrapper {
         self.provider_id
@@ -167,15 +155,12 @@ impl<OutMode: OutputMode + 'static> LayerBuilder<OutMode> {
     /// Keywords in user_events are not bitmasks.
     ///
     /// ```
-    /// # use tracing_subscriber::prelude::*;
-    /// # let reg = tracing_subscriber::registry();
     /// # let layer =
     /// tracing_etw::LayerBuilder::new("SampleProviderName")
     ///     .with_default_keyword(0x1000)
     /// # ;
-    /// # let built = layer.build();
+    /// # let built = layer.build_subscriber();
     /// # assert!(built.is_ok());
-    /// # reg.with(built.unwrap());
     /// ```
     ///
     pub fn with_default_keyword(mut self, kw: u64) -> Self {

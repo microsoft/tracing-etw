@@ -33,6 +33,7 @@ impl Dispatches {
             .find_map(tracing::dispatcher::WeakDispatch::upgrade)
     }
 
+    #[cfg(test)]
     pub(crate) fn is_empty(&self) -> bool {
         self.0.read().unwrap_or_else(|e| e.into_inner()).is_empty()
     }

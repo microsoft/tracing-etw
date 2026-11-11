@@ -21,37 +21,18 @@ impl<OutMode: OutputMode, S> _EtwTracingSubscriber<OutMode, S> {
             if !crate::native::uses_span_strings::<OutMode>() {
                 return None;
             }
-            let id = id?;
-            let dispatch = self.otel_dispatch(id)?;
-            crate::otel::get_otel_span_data(id, &dispatch)
+            // Layers that were never registered with a dispatcher (installed
+            // through reload::Handle::reload, or inside an Arc-shared
+            // subscriber) cannot tell which registry owns a span ID, so they
+            // use local span IDs rather than risk another registry's context.
+            let dispatch = self.dispatch.upgrade()?;
+            crate::otel::get_otel_span_data(id?, &dispatch)
         }
         #[cfg(not(feature = "opentelemetry"))]
         {
             let _ = id;
             None
         }
-    }
-
-    #[cfg(feature = "opentelemetry")]
-    fn otel_dispatch(&self, id: &span::Id) -> Option<tracing::Dispatch> {
-        if let Some(dispatch) = self.dispatch.upgrade() {
-            return Some(dispatch);
-        }
-        if !self.dispatch.is_empty() {
-            return None;
-        }
-        // reload::Handle::reload never registers the replacement layer with a
-        // dispatcher. Fall back to the current default, but only if its
-        // registry holds this span with the same callsite, so a span with the
-        // same ID in an unrelated registry is not used.
-        use tracing_subscriber::registry::LookupSpan as _;
-        let ours = registry::span_metadata(self.subscriber_id, id)?;
-        let current = tracing::dispatcher::get_default(|dispatch| dispatch.clone());
-        let matches = current
-            .downcast_ref::<tracing_subscriber::Registry>()?
-            .span(id)
-            .is_some_and(|span| core::ptr::eq(span.metadata(), ours));
-        matches.then_some(current)
     }
 
     // Span stop records also carry the parent's span ID. The child and parent
@@ -143,8 +124,11 @@ where
             .and_then(|span| span.parent())
             .map(|parent| parent.id());
         // Layers installed through reload::Handle::reload never see on_layer.
-        self.attached
-            .store(true, core::sync::atomic::Ordering::Relaxed);
+        // Load first so span creation doesn't keep writing a shared cache line.
+        if !self.attached.load(core::sync::atomic::Ordering::Relaxed) {
+            self.attached
+                .store(true, core::sync::atomic::Ordering::Relaxed);
+        }
         registry::create_span_data_for_new_span(self.subscriber_id, attrs, id, parent.as_ref())
     }
 
@@ -387,74 +371,53 @@ mod tests {
                 .is_some()
         );
         drop((live, second));
-        assert!(!dispatches.is_empty() && dispatches.upgrade().is_none());
+        assert!(!dispatches.is_empty());
+        // Concurrent callsite-interest rebuilds in other tests can briefly
+        // upgrade every registered dispatcher, so allow those to finish.
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+        while dispatches.upgrade().is_some() {
+            assert!(
+                std::time::Instant::now() < deadline,
+                "Registered dispatches must not keep subscribers alive"
+            );
+            std::thread::yield_now();
+        }
     }
 
     // tracing-core's `Arc<S>` subscriber does not forward on_register_dispatch,
-    // so an Arc-shared subscriber relies on the current-dispatch fallback.
+    // so the layer cannot tell which registry owns a span ID. Another registry
+    // can hold a span with the same ID and callsite; its context must not be
+    // used.
     #[test]
-    fn arc_shared_subscriber_resolves_context_from_the_current_dispatch() {
+    fn unregistered_layer_uses_local_ids_instead_of_another_registrys_context() {
         let subscriber = std::sync::Arc::new(
             tracing_subscriber::registry()
                 .with(
-                    LayerBuilder::new_common_schema_events("OtelShared")
+                    LayerBuilder::new_common_schema_events("OtelUnregistered")
                         .__build_for_test()
                         .unwrap(),
                 )
                 .with(tracing_opentelemetry::layer()),
         );
-        let first = Dispatch::new(subscriber.clone());
-        let second = Dispatch::new(subscriber.clone());
-        drop(first);
+        let owner = Dispatch::new(subscriber.clone());
+        let other =
+            Dispatch::new(tracing_subscriber::registry().with(tracing_opentelemetry::layer()));
         let layer = subscriber
             .downcast_ref::<_EtwTracingSubscriber<CommonSchemaOutput, tracing_subscriber::Registry>>()
             .unwrap();
-        tracing::dispatcher::with_default(&second, || {
-            let span = tracing::info_span!("OtelShared");
+        let new_span = || {
+            let span = tracing::info_span!("OtelCollision");
             span.set_parent(remote_parent()).unwrap();
-            let strings = layer
-                .get_otel_span_strings(span.id().as_ref())
-                .expect("The second dispatch is still alive");
-            assert_eq!(&strings.trace_id, b"00000000000000000000000000001234");
-        });
-    }
-
-    #[test]
-    fn reloaded_layer_uses_the_current_dispatch_for_its_own_spans() {
-        let (reloadable, handle) = tracing_subscriber::reload::Layer::new(
-            LayerBuilder::new_common_schema_events("OtelReloadInitial")
-                .__build_for_test()
-                .unwrap(),
-        );
-        let dispatch = Dispatch::new(
-            tracing_subscriber::registry()
-                .with(reloadable)
-                .with(tracing_opentelemetry::layer()),
-        );
-        let replacement = LayerBuilder::new_common_schema_events("OtelReloadReplacement")
-            .__build_for_test()
-            .unwrap();
-        // A clone shares the replacement's storage and, like it, is never
-        // registered with a dispatcher.
-        let probe = replacement.clone();
-        handle.reload(replacement).unwrap();
-        tracing::dispatcher::with_default(&dispatch, || {
-            let span = tracing::info_span!("OtelReloaded");
-            span.set_parent(remote_parent()).unwrap();
-            let id = span.id().unwrap();
-            let strings = probe
-                .get_otel_span_strings(Some(&id))
-                .expect("The current dispatch holds this span");
-            assert_eq!(&strings.trace_id, b"00000000000000000000000000001234");
-
-            // A different registry's span with the same ID is not used.
-            let other =
-                Dispatch::new(tracing_subscriber::registry().with(tracing_opentelemetry::layer()));
+            span
+        };
+        tracing::dispatcher::with_default(&owner, || {
+            let ours = new_span();
+            let id = ours.id().unwrap();
             tracing::dispatcher::with_default(&other, || {
-                let unrelated = tracing::info_span!("OtelUnrelated");
-                unrelated.set_parent(remote_parent()).unwrap();
-                assert_eq!(unrelated.id(), Some(id.clone()));
-                assert!(probe.get_otel_span_strings(Some(&id)).is_none());
+                let theirs = new_span();
+                assert_eq!(theirs.id(), Some(id.clone()));
+                assert!(layer.get_otel_span_strings(Some(&id)).is_none());
+                assert!(layer.get_otel_span_stop_strings(&id, || None).is_none());
             });
         });
     }

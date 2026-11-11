@@ -21,6 +21,9 @@ pub struct _EtwTracingSubscriber<OutMode: OutputMode, S = ()> {
     // so that dropping it releases that data.
     #[cfg(feature = "std")]
     pub(crate) attached: core::sync::atomic::AtomicBool,
+    // Built by a registry-layer builder rather than build_subscriber().
+    #[cfg(feature = "std")]
+    pub(crate) registry_layer: bool,
     pub(crate) _p: PhantomData<S>,
 }
 
@@ -54,7 +57,16 @@ impl<OutMode: OutputMode, S> Clone for _EtwTracingSubscriber<OutMode, S> {
             provider: self.provider.clone(),
             default_keyword: self.default_keyword,
             // Standalone subscriber clones intentionally share span storage.
-            // Registry layers receive a new identity when attached (on_layer).
+            // Registry layer clones may be attached to different registries,
+            // including through reload::Handle::reload (which never calls
+            // on_layer), so each clone gets its own storage identity.
+            #[cfg(feature = "std")]
+            subscriber_id: if self.registry_layer {
+                crate::layer::core_subscriber::next_id()
+            } else {
+                self.subscriber_id
+            },
+            #[cfg(not(feature = "std"))]
             subscriber_id: self.subscriber_id,
             // A cloned layer captures its own dispatch when registered.
             #[cfg(feature = "opentelemetry")]
@@ -62,6 +74,8 @@ impl<OutMode: OutputMode, S> Clone for _EtwTracingSubscriber<OutMode, S> {
             // Only the attached instance owns its stored span data.
             #[cfg(feature = "std")]
             attached: Default::default(),
+            #[cfg(feature = "std")]
+            registry_layer: self.registry_layer,
             _p: PhantomData,
         }
     }

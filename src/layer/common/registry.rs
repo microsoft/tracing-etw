@@ -245,17 +245,6 @@ pub(crate) fn release_subscriber(subscriber_id: u64) {
     }
 }
 
-#[cfg(feature = "opentelemetry")]
-pub(crate) fn span_metadata(
-    subscriber_id: u64,
-    id: &tracing::span::Id,
-) -> Option<&'static tracing_core::Metadata<'static>> {
-    let key = (subscriber_id, id.clone());
-    SpanLookup::new(&key)
-        .payload()
-        .map(|payload| payload.read().metadata)
-}
-
 pub(crate) fn enter_span<OutMode: OutputMode>(
     subscriber_id: u64,
     id: &tracing::span::Id,
@@ -427,6 +416,47 @@ mod tests {
             drop(span);
             drop(parent);
         });
+    }
+
+    #[test]
+    fn reloading_a_clone_does_not_share_or_release_the_originals_spans() {
+        let layer = LayerBuilder::new("RegistryReloadClone")
+            .__build_for_test()
+            .unwrap();
+        let clone = layer.clone();
+        let original_id = layer.subscriber_id;
+        assert_ne!(clone.subscriber_id, original_id);
+        let first = tracing::Dispatch::new(tracing_subscriber::registry().with(layer));
+        let first_id = first
+            .downcast_ref::<_EtwTracingSubscriber<NormalOutput, tracing_subscriber::Registry>>()
+            .unwrap()
+            .subscriber_id;
+        let (reloadable, handle) = tracing_subscriber::reload::Layer::new(
+            LayerBuilder::new("RegistryReloadTarget")
+                .__build_for_test()
+                .unwrap(),
+        );
+        let second = tracing::Dispatch::new(tracing_subscriber::registry().with(reloadable));
+        // reload never calls on_layer, so the clone keeps its own identity.
+        handle.reload(clone).unwrap();
+        let second_id = handle.with_current(|layer| layer.subscriber_id).unwrap();
+        assert_ne!(second_id, first_id);
+
+        let values = META.fields().value_set(&[]);
+        let ours = first.new_span(&Attributes::new_root(&META, &values));
+        let theirs = second.new_span(&Attributes::new_root(&META, &values));
+        assert_eq!(ours, theirs);
+        assert!(contains(first_id, &ours) && contains(second_id, &theirs));
+        drop(second);
+        let deadline = std::time::Instant::now() + Duration::from_secs(5);
+        while contains(second_id, &theirs) {
+            assert!(std::time::Instant::now() < deadline);
+            std::thread::yield_now();
+        }
+        // Dropping the reloaded clone leaves the original's spans alone.
+        assert!(contains(first_id, &ours));
+        assert!(first.try_close(ours.clone()));
+        assert!(!contains(first_id, &ours));
     }
 
     #[test]

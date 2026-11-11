@@ -207,8 +207,20 @@ impl<OutMode: OutputMode + 'static> LayerBuilder<OutMode> {
             dispatch: Default::default(),
             #[cfg(feature = "std")]
             attached: Default::default(),
+            #[cfg(feature = "std")]
+            registry_layer: false,
             _p: PhantomData,
         }
+    }
+
+    #[cfg(feature = "std")]
+    fn new_registry_layer<S>(&self) -> _EtwTracingSubscriber<OutMode, S>
+    where
+        crate::native::Provider<OutMode>: ProviderTraits,
+    {
+        let mut layer = self.new_tracing_subscriber();
+        layer.registry_layer = true;
+        layer
     }
 
     #[cfg(feature = "std")]
@@ -257,7 +269,7 @@ impl<OutMode: OutputMode + 'static> LayerBuilder<OutMode> {
     {
         self.validate_config()?;
 
-        let layer = self.new_tracing_subscriber::<S>();
+        let layer = self.new_registry_layer::<S>();
 
         let filter = self.build_filter(layer.clone());
 
@@ -361,7 +373,7 @@ impl<OutMode: OutputMode + 'static> LayerBuilder<OutMode> {
     {
         self.validate_config()?;
 
-        let layer = self.new_tracing_subscriber::<S>();
+        let layer = self.new_registry_layer::<S>();
 
         let filter = self.build_filter(layer.clone());
 
@@ -386,6 +398,6 @@ impl<OutMode: OutputMode + 'static> LayerBuilder<OutMode> {
         // By skipping the adding the filter, we can avoid the enablement checks and
         // ensure the code is actually being run and writing an event, without needing
         // to set up an external listener.
-        Ok(self.new_tracing_subscriber())
+        Ok(self.new_registry_layer())
     }
 }

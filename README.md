@@ -115,6 +115,11 @@ when `std` is enabled.
 Span strings (trace/span ID text) are written only by Common Schema output.
 Normal output skips OpenTelemetry context lookups and ID formatting, and no
 output mode looks up OpenTelemetry context for span start events.
+OpenTelemetry context is looked up through the dispatcher the layer was
+registered with. Layers that are never registered, such as replacements
+installed with `tracing_subscriber::reload::Handle::reload` or layers inside a
+subscriber shared through `Arc`, cannot tell which registry owns a span ID and
+use local span IDs instead.
 
 Standalone span IDs encode a 5-bit shard, 27-bit slot, and 32-bit generation.
 Indexed lookup checks both the generation and subscriber identity without

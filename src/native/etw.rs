@@ -1,15 +1,17 @@
-use crate::statics::GLOBAL_ACTIVITY_SEED;
-use crate::{
-    error::EtwError,
-    native::{CommonSchemaOutput, NormalOutput, OutputMode},
-    values::{event_values::*, *},
-};
-use chrono::{Datelike, Timelike};
-use std::marker::PhantomData;
-use std::{cell::RefCell, ops::DerefMut, pin::Pin, sync::Arc, time::SystemTime};
+use core::{marker::PhantomData, ops::DerefMut, pin::Pin};
+extern crate alloc;
+use alloc::sync::Arc;
+
 use tracelogging::*;
 use tracelogging_dynamic::EventBuilder;
-use tracing_subscriber::registry::{LookupSpan, SpanRef};
+
+use crate::{
+    error::EtwError,
+    layer::common::SpanStrings,
+    native::{CommonSchemaOutput, NormalOutput, OutputMode, time},
+    statics::GLOBAL_ACTIVITY_SEED,
+    values::{event_values::*, *},
+};
 
 // Items within this .rdata section will be sorted alphabetically, thus the start is named with "0", the end "9", and each metadata "5".
 // If these statics aren't mut then everything will silently fail to work.
@@ -24,29 +26,25 @@ pub(crate) static mut _stop__etw_kw: usize = 0;
 /// [`LayerBuilder::with_provider_group`](crate::LayerBuilder::with_provider_group).
 ///
 /// This type is platform-specific. It maps to [`tracelogging::Guid`] on Windows
-/// and [`Cow<'static, str>`](std::borrow::Cow) on Linux.
+/// and [`Cow<'static, str>`](alloc::borrow::Cow) on Linux.
 pub type ProviderGroupId = crate::native::native_guid;
-
-thread_local! {static EBW: std::cell::RefCell<EventBuilder>  = RefCell::new(EventBuilder::new());}
 
 struct Win32SystemTime {
     st: [u16; 8],
 }
 
-impl From<std::time::SystemTime> for Win32SystemTime {
-    fn from(value: std::time::SystemTime) -> Self {
-        let dt: chrono::DateTime<chrono::Utc> = chrono::DateTime::from(value);
-
+impl From<time::CivilTime> for Win32SystemTime {
+    fn from(value: time::CivilTime) -> Self {
         Win32SystemTime {
             st: [
-                dt.year() as u16,
-                dt.month() as u16,
+                value.year as u16,
+                value.month as u16,
                 0,
-                dt.day() as u16,
-                dt.hour() as u16,
-                dt.minute() as u16,
-                dt.second() as u16,
-                (dt.nanosecond() / 1000000) as u16,
+                value.day as u16,
+                value.hour as u16,
+                value.minute as u16,
+                value.second as u16,
+                (value.nanosecond / 1_000_000) as u16,
             ],
         }
     }
@@ -75,13 +73,17 @@ impl AddFieldAndValue for &'_ mut tracelogging_dynamic::EventBuilder {
                 self.add_bool32(fv.field_name, *b as i32, OutType::Default, 0);
             }
             ValueTypes::v_str(s) => {
-                self.add_str8(fv.field_name, s.as_ref(), OutType::Utf8, 0);
+                self.add_str_value(fv.field_name, s.as_ref());
             }
             ValueTypes::v_char(c) => {
                 // Or add_str16 with a 1-char (BMP) or 2-char (surrogate-pair) string.
                 self.add_u16(fv.field_name, *c as u16, OutType::String, 0);
             }
         }
+    }
+
+    fn add_str_value(&mut self, field_name: &'static str, value: &str) {
+        self.add_str8(field_name, value, OutType::Utf8, 0);
     }
 }
 
@@ -180,35 +182,32 @@ impl<Mode: OutputMode> Provider<Mode> {
 }
 
 impl<Mode: OutputMode> super::EventWriter<NormalOutput> for Provider<Mode> {
-    fn span_start<'a, 'b, R>(
+    super::delegate_event_writer!(NormalOutput, true);
+
+    fn span_start_in_context(
         self: Pin<&Self>,
-        span: &'b SpanRef<'a, R>,
-        timestamp: SystemTime,
-        activity_id: &[u8; 16],
-        related_activity_id: &[u8; 16],
-        fields: &'b [crate::values::span_values::FieldValueIndex],
-        level: &tracing_core::Level,
+        data: crate::layer::common::SpanRef,
         keyword: u64,
         event_tag: u32,
-    ) where
-        R: LookupSpan<'a>,
-    {
-        let span_name = span.name();
-
-        EBW.with(|eb| {
-            let mut eb = eb.borrow_mut();
-
-            eb.reset(span_name, Self::map_level(level), keyword, event_tag);
+        context: &super::EventContext,
+    ) {
+        context.with_builder(|mut eb| {
+            eb.reset(
+                data.name(),
+                Self::map_level(&data.level()),
+                keyword,
+                event_tag,
+            );
             eb.opcode(Opcode::Start);
 
             eb.add_systemtime(
                 "start time",
-                &Into::<Win32SystemTime>::into(timestamp).st,
+                &Into::<Win32SystemTime>::into(data.timestamp()).st,
                 OutType::DateTimeUtc,
                 0,
             );
 
-            for f in fields {
+            for f in data.fields() {
                 <&mut EventBuilder as AddFieldAndValue>::add_field_value(
                     &mut eb.deref_mut(),
                     &FieldAndValue {
@@ -218,16 +217,16 @@ impl<Mode: OutputMode> super::EventWriter<NormalOutput> for Provider<Mode> {
                 );
             }
 
-            let act = tracelogging_dynamic::Guid::from_bytes_le(activity_id);
-            let related = tracelogging_dynamic::Guid::from_bytes_le(related_activity_id);
+            let act = tracelogging_dynamic::Guid::from_bytes_le(data.activity_id());
+            let related = tracelogging_dynamic::Guid::from_bytes_le(data.related_activity_id());
             let _ = eb.write(
                 &self.get_provider(),
-                if activity_id[0] != 0 {
+                if data.activity_id()[0] != 0 {
                     Some(&act)
                 } else {
                     None
                 },
-                if related_activity_id[0] != 0 {
+                if data.related_activity_id()[0] != 0 {
                     Some(&related)
                 } else {
                     None
@@ -236,25 +235,21 @@ impl<Mode: OutputMode> super::EventWriter<NormalOutput> for Provider<Mode> {
         });
     }
 
-    fn span_stop<'a, 'b, R>(
+    fn span_stop_in_context(
         self: Pin<&Self>,
-        span: &'b SpanRef<'a, R>,
-        start_stop_times: (std::time::SystemTime, std::time::SystemTime),
-        activity_id: &[u8; 16],
-        related_activity_id: &[u8; 16],
-        fields: &'b [crate::values::span_values::FieldValueIndex],
-        level: &tracing_core::Level,
+        start_stop_times: (time::CivilTime, time::CivilTime),
+        data: crate::layer::common::SpanRef,
         keyword: u64,
         event_tag: u32,
-    ) where
-        R: LookupSpan<'a>,
-    {
-        let span_name = span.name();
-
-        EBW.with(|eb| {
-            let mut eb = eb.borrow_mut();
-
-            eb.reset(span_name, Self::map_level(level), keyword, event_tag);
+        context: &super::EventContext,
+    ) {
+        context.with_builder(|mut eb| {
+            eb.reset(
+                data.name(),
+                Self::map_level(&data.level()),
+                keyword,
+                event_tag,
+            );
             eb.opcode(Opcode::Stop);
 
             eb.add_systemtime(
@@ -264,7 +259,7 @@ impl<Mode: OutputMode> super::EventWriter<NormalOutput> for Provider<Mode> {
                 0,
             );
 
-            for f in fields {
+            for f in data.fields() {
                 <&mut EventBuilder as AddFieldAndValue>::add_field_value(
                     &mut eb.deref_mut(),
                     &FieldAndValue {
@@ -274,16 +269,16 @@ impl<Mode: OutputMode> super::EventWriter<NormalOutput> for Provider<Mode> {
                 );
             }
 
-            let act = tracelogging_dynamic::Guid::from_bytes_le(activity_id);
-            let related = tracelogging_dynamic::Guid::from_bytes_le(related_activity_id);
+            let act = tracelogging_dynamic::Guid::from_bytes_le(data.activity_id());
+            let related = tracelogging_dynamic::Guid::from_bytes_le(data.related_activity_id());
             let _ = eb.write(
                 &self.get_provider(),
-                if activity_id[0] != 0 {
+                if data.activity_id()[0] != 0 {
                     Some(&act)
                 } else {
                     None
                 },
-                if related_activity_id[0] != 0 {
+                if data.related_activity_id()[0] != 0 {
                     Some(&related)
                 } else {
                     None
@@ -292,9 +287,9 @@ impl<Mode: OutputMode> super::EventWriter<NormalOutput> for Provider<Mode> {
         });
     }
 
-    fn write_record(
+    fn write_record_in_context(
         self: Pin<&Self>,
-        timestamp: SystemTime,
+        timestamp: time::CivilTime,
         current_span: u64,
         parent_span: u64,
         event_name: &str,
@@ -302,9 +297,11 @@ impl<Mode: OutputMode> super::EventWriter<NormalOutput> for Provider<Mode> {
         keyword: u64,
         event_tag: u32,
         event: &tracing::Event<'_>,
-        _otel_context: Option<([u8; 32], [u8; 16])>,
+        _span_strings: Option<SpanStrings>,
+        context: &super::EventContext,
     ) {
-        let mut activity_id: [u8; 16] = *GLOBAL_ACTIVITY_SEED;
+        let activity_seed = *GLOBAL_ACTIVITY_SEED;
+        let mut activity_id: [u8; 16] = activity_seed;
         activity_id[0] = if current_span != 0 {
             let (_, half) = activity_id.split_at_mut(8);
             half.copy_from_slice(&current_span.to_le_bytes());
@@ -313,7 +310,7 @@ impl<Mode: OutputMode> super::EventWriter<NormalOutput> for Provider<Mode> {
             0
         };
 
-        let mut related_activity_id: [u8; 16] = *GLOBAL_ACTIVITY_SEED;
+        let mut related_activity_id: [u8; 16] = activity_seed;
         related_activity_id[0] = if parent_span != 0 {
             let (_, half) = related_activity_id.split_at_mut(8);
             half.copy_from_slice(&parent_span.to_le_bytes());
@@ -322,9 +319,7 @@ impl<Mode: OutputMode> super::EventWriter<NormalOutput> for Provider<Mode> {
             0
         };
 
-        EBW.with(|eb| {
-            let mut eb = eb.borrow_mut();
-
+        context.with_builder(|mut eb| {
             eb.reset(event_name, Self::map_level(level), keyword, event_tag);
             eb.opcode(Opcode::Info);
 
@@ -385,72 +380,45 @@ impl AddFieldAndValue for CommonSchemaPartCBuilder<'_> {
             },
         );
     }
+
+    fn add_str_value(&mut self, field_name: &'static str, value: &str) {
+        let field_name = if field_name == "message" {
+            "Body"
+        } else {
+            field_name
+        };
+        <&mut EventBuilder as AddFieldAndValue>::add_str_value(&mut self.eb, field_name, value);
+    }
 }
 
 impl<Mode: OutputMode> super::EventWriter<CommonSchemaOutput> for Provider<Mode> {
-    fn span_start<'a, 'b, R>(
+    super::delegate_event_writer!(CommonSchemaOutput, false);
+
+    fn span_start_in_context(
         self: Pin<&Self>,
-        _span: &'b SpanRef<'a, R>,
-        _timestamp: SystemTime,
-        _activity_id: &[u8; 16],
-        _related_activity_id: &[u8; 16],
-        _fields: &'b [crate::values::span_values::FieldValueIndex],
-        _level: &tracing_core::Level,
+        _data: crate::layer::common::SpanRef,
         _keyword: u64,
         _event_tag: u32,
-    ) where
-        R: LookupSpan<'a>,
-    {
+        _context: &super::EventContext,
+    ) {
     }
 
-    fn span_stop<'a, 'b, R>(
+    fn span_stop_in_context(
         self: Pin<&Self>,
-        span: &'b SpanRef<'a, R>,
-        start_stop_times: (std::time::SystemTime, std::time::SystemTime),
-        _activity_id: &[u8; 16],
-        _related_activity_id: &[u8; 16],
-        fields: &'b [crate::values::span_values::FieldValueIndex],
-        level: &tracing_core::Level,
+        start_stop_times: (time::CivilTime, time::CivilTime),
+        data: crate::layer::common::SpanRef,
         keyword: u64,
         event_tag: u32,
-    ) where
-        R: LookupSpan<'a>,
-    {
-        let span_name = span.name();
-
-        // Extract trace_id and span_id - prefer OpenTelemetry context when available
-        #[cfg(feature = "opentelemetry")]
-        let (trace_id, span_id) = {
-            let otel_ctx = crate::otel::extract_otel_context(span);
-            if otel_ctx.is_valid {
-                (otel_ctx.trace_id, otel_ctx.span_id)
-            } else {
-                // Fall back to local tracing span ID
-                let mut span_id_buf = [0u8; 16];
-                let trace_id_buf = [0u8; 32];
-                let _ = std::io::Write::write_fmt(
-                    &mut span_id_buf.as_mut_slice(),
-                    format_args!("{:016x}", span.id().into_u64()),
-                );
-                (trace_id_buf, span_id_buf)
-            }
-        };
-
-        #[cfg(not(feature = "opentelemetry"))]
-        let (trace_id, span_id) = {
-            let mut span_id_buf = [0u8; 16];
-            let trace_id_buf = [0u8; 32];
-            let _ = std::io::Write::write_fmt(
-                &mut span_id_buf.as_mut_slice(),
-                format_args!("{:016x}", span.id().into_u64()),
+        context: &super::EventContext,
+    ) {
+        context.with_builder(|mut eb| {
+            let span_strings = data.span_strings();
+            eb.reset(
+                data.name(),
+                Self::map_level(&data.level()),
+                keyword,
+                event_tag,
             );
-            (trace_id_buf, span_id_buf)
-        };
-
-        EBW.with(|eb| {
-            let mut eb = eb.borrow_mut();
-
-            eb.reset(span_name, Self::map_level(level), keyword, event_tag);
             eb.opcode(Opcode::Info);
 
             // Promoting values from PartC to PartA extensions is apparently just a draft spec
@@ -460,15 +428,13 @@ impl<Mode: OutputMode> super::EventWriter<CommonSchemaOutput> for Provider<Mode>
             eb.add_u16("__csver__", 0x0401, OutType::Signed, 0);
             eb.add_struct("PartA", 2 /* + exts.len() as u8*/, 0);
             {
-                let time: String = chrono::DateTime::to_rfc3339(
-                    &chrono::DateTime::<chrono::Utc>::from(start_stop_times.1),
-                );
-                eb.add_str8("time", time, OutType::Utf8, 0);
+                let stop_time = time::to_rfc3339(start_stop_times.1);
+                eb.add_str8("time", stop_time.as_str(), OutType::Utf8, 0);
 
                 eb.add_struct("ext_dt", 2, 0);
                 {
-                    eb.add_str8("traceId", trace_id, OutType::Utf8, 0);
-                    eb.add_str8("spanId", span_id, OutType::Utf8, 0);
+                    eb.add_str8("traceId", span_strings.trace_id, OutType::Utf8, 0);
+                    eb.add_str8("spanId", span_strings.span_id, OutType::Utf8, 0);
                 }
             }
 
@@ -483,62 +449,37 @@ impl<Mode: OutputMode> super::EventWriter<CommonSchemaOutput> for Provider<Mode>
             //     }
             // }
 
-            let span_parent = span.parent();
-            let partb_field_count = 3 + if span_parent.is_some() { 1 } else { 0 };
+            let partb_field_count = 3 + if span_strings.parent_span_id().is_some() {
+                1
+            } else {
+                0
+            };
 
             eb.add_struct("PartB", partb_field_count, 0);
             {
                 eb.add_str8("_typeName", "Span", OutType::Utf8, 0);
 
-                if let Some(parent) = span_parent {
-                    // Extract parent span_id - prefer OpenTelemetry context when available
-                    #[cfg(feature = "opentelemetry")]
-                    let parent_span_id = {
-                        let otel_ctx = crate::otel::extract_otel_context(&parent);
-                        if otel_ctx.is_valid {
-                            otel_ctx.span_id
-                        } else {
-                            let mut buf = [0u8; 16];
-                            let _ = std::io::Write::write_fmt(
-                                &mut buf.as_mut_slice(),
-                                format_args!("{:016x}", parent.id().into_u64()),
-                            );
-                            buf
-                        }
-                    };
-
-                    #[cfg(not(feature = "opentelemetry"))]
-                    let parent_span_id = {
-                        let mut buf = [0u8; 16];
-                        let _ = std::io::Write::write_fmt(
-                            &mut buf.as_mut_slice(),
-                            format_args!("{:016x}", parent.id().into_u64()),
-                        );
-                        buf
-                    };
-
-                    eb.add_str8("parentId", parent_span_id, OutType::Utf8, 0);
+                if let Some(pid) = span_strings.parent_span_id() {
+                    eb.add_str8("parentId", pid, OutType::Utf8, 0);
                 }
 
-                eb.add_str8("name", span_name, OutType::Utf8, 0);
+                eb.add_str8("name", data.name(), OutType::Utf8, 0);
 
                 eb.add_str8(
                     "startTime",
-                    chrono::DateTime::to_rfc3339(&chrono::DateTime::<chrono::Utc>::from(
-                        start_stop_times.0,
-                    )),
+                    time::to_rfc3339(start_stop_times.0).as_str(),
                     OutType::Utf8,
                     0,
                 );
             }
 
-            let partc_field_count = span.fields().len() as u8;
+            let partc_field_count = data.field_count() as u8;
 
             eb.add_struct("PartC", partc_field_count, 0);
             {
                 let mut pfv = CommonSchemaPartCBuilder { eb: eb.deref_mut() };
 
-                for f in fields {
+                for f in data.fields() {
                     <CommonSchemaPartCBuilder<'_> as AddFieldAndValue>::add_field_value(
                         &mut pfv,
                         &FieldAndValue {
@@ -553,21 +494,22 @@ impl<Mode: OutputMode> super::EventWriter<CommonSchemaOutput> for Provider<Mode>
         });
     }
 
-    fn write_record(
+    fn write_record_in_context(
         self: Pin<&Self>,
-        timestamp: SystemTime,
-        current_span: u64,
+        timestamp: time::CivilTime,
+        _current_span: u64,
         _parent_span: u64,
         event_name: &str,
         level: &tracing_core::Level,
         keyword: u64,
         event_tag: u32,
         event: &tracing::Event<'_>,
-        otel_context: Option<([u8; 32], [u8; 16])>,
+        span_strings: Option<SpanStrings>,
+        context: &super::EventContext,
     ) {
-        EBW.with(|eb| {
-            let mut eb = eb.borrow_mut();
-
+        // Format once; PartA time and PartB eventTime are the same instant.
+        let event_time = time::to_rfc3339(timestamp);
+        context.with_builder(|mut eb| {
             eb.reset(event_name, Self::map_level(level), keyword, event_tag);
             eb.opcode(Opcode::Info);
 
@@ -578,32 +520,17 @@ impl<Mode: OutputMode> super::EventWriter<CommonSchemaOutput> for Provider<Mode>
             eb.add_u16("__csver__", 0x0401, OutType::Signed, 0);
             eb.add_struct(
                 "PartA",
-                1 + if current_span != 0 || otel_context.is_some() { 1 } else { 0 }, /* + exts.len() as u8*/
+                1 + if span_strings.is_some() { 1 } else { 0 }, /* + exts.len() as u8*/
                 0,
             );
             {
-                let time: String =
-                    chrono::DateTime::to_rfc3339(&chrono::DateTime::<chrono::Utc>::from(timestamp));
-                eb.add_str8("time", time, OutType::Utf8, 0);
+                eb.add_str8("time", event_time.as_str(), OutType::Utf8, 0);
 
-                // Use OTel context if available, otherwise fall back to local span ID
-                if let Some((trace_id, span_id)) = otel_context {
+                if let Some(span_strings) = span_strings {
                     eb.add_struct("ext_dt", 2, 0);
                     {
-                        eb.add_str8("traceId", trace_id, OutType::Utf8, 0);
-                        eb.add_str8("spanId", span_id, OutType::Utf8, 0);
-                    }
-                } else if current_span != 0 {
-                    eb.add_struct("ext_dt", 2, 0);
-                    {
-                        let mut span_id_buf = [0u8; 16];
-                        let _ = std::io::Write::write_fmt(
-                            &mut span_id_buf.as_mut_slice(),
-                            format_args!("{:016x}", current_span),
-                        );
-
-                        eb.add_str8("traceId", [0u8; 32], OutType::Utf8, 0);
-                        eb.add_str8("spanId", span_id_buf, OutType::Utf8, 0);
+                        eb.add_str8("traceId", span_strings.trace_id, OutType::Utf8, 0);
+                        eb.add_str8("spanId", span_strings.span_id, OutType::Utf8, 0);
                     }
                 }
             }
@@ -613,12 +540,7 @@ impl<Mode: OutputMode> super::EventWriter<CommonSchemaOutput> for Provider<Mode>
                 eb.add_str8("_typeName", "Log", OutType::Utf8, 0);
                 eb.add_str8("name", event_name, OutType::Utf8, 0);
 
-                eb.add_str8(
-                    "eventTime",
-                    chrono::DateTime::to_rfc3339(&chrono::DateTime::<chrono::Utc>::from(timestamp)),
-                    OutType::Utf8,
-                    0,
-                );
+                eb.add_str8("eventTime", event_time.as_str(), OutType::Utf8, 0);
             }
 
             let partc_field_count = event.fields().count() as u8;

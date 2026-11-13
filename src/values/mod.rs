@@ -1,7 +1,95 @@
 pub(crate) mod event_values;
 pub(crate) mod span_values;
 
-use std::borrow::Cow;
+extern crate alloc;
+use alloc::{borrow::Cow, string::String};
+use core::fmt;
+
+/// Inline capacity for formatting field values without a heap allocation.
+pub(crate) const FORMAT_INLINE_CAPACITY: usize = 512;
+
+/// A string builder that formats into inline storage and spills to the heap
+/// only when the output exceeds `N` bytes.
+pub(crate) struct FormatBuffer<const N: usize> {
+    inline: [u8; N],
+    len: usize,
+    spilled: Option<String>,
+}
+
+impl<const N: usize> FormatBuffer<N> {
+    #[inline]
+    pub(crate) const fn new() -> Self {
+        Self {
+            inline: [0; N],
+            len: 0,
+            spilled: None,
+        }
+    }
+
+    #[inline]
+    pub(crate) fn as_str(&self) -> &str {
+        match &self.spilled {
+            Some(spilled) => spilled,
+            // The inline prefix is built only from whole `&str` values.
+            None => core::str::from_utf8(&self.inline[..self.len])
+                .expect("Inline format buffer holds valid UTF-8"),
+        }
+    }
+
+    /// Converts to an owned string with a single exactly sized allocation
+    /// when the contents are still inline.
+    pub(crate) fn into_string(self) -> String {
+        match self.spilled {
+            Some(spilled) => spilled,
+            None => String::from(self.as_str()),
+        }
+    }
+}
+
+impl<const N: usize> fmt::Write for FormatBuffer<N> {
+    #[inline]
+    fn write_str(&mut self, s: &str) -> fmt::Result {
+        if let Some(spilled) = &mut self.spilled {
+            spilled.push_str(s);
+        } else if s.len() <= N - self.len {
+            let end = self.len + s.len();
+            self.inline[self.len..end].copy_from_slice(s.as_bytes());
+            self.len = end;
+        } else {
+            let mut spilled = String::with_capacity((self.len + s.len()).max(2 * N));
+            spilled.push_str(self.as_str());
+            spilled.push_str(s);
+            self.spilled = Some(spilled);
+        }
+        Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use core::fmt::Write;
+
+    #[test]
+    fn format_buffer_spills_without_losing_inline_contents() {
+        let (greek, f, ghij) = ("αβγ", "f", "ghij");
+        let mut buffer = FormatBuffer::<8>::new();
+        write!(buffer, "{greek}").unwrap();
+        assert_eq!(buffer.as_str(), "αβγ");
+        buffer.write_str("de").unwrap();
+        assert_eq!(buffer.as_str(), "αβγde");
+        assert!(buffer.spilled.is_none());
+        write!(buffer, "{f}{ghij}").unwrap();
+        assert_eq!(buffer.as_str(), "αβγdefghij");
+        assert!(buffer.spilled.is_some());
+        assert_eq!(buffer.into_string(), "αβγdefghij");
+
+        let mut inline = FormatBuffer::<8>::new();
+        write!(inline, "{:?}", 7u8).unwrap();
+        let owned = inline.into_string();
+        assert_eq!((owned.as_str(), owned.capacity()), ("7", 1));
+    }
+}
 
 #[allow(non_camel_case_types, dead_code)]
 #[derive(Default, Clone)]

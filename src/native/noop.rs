@@ -1,10 +1,10 @@
-use std::{marker::PhantomData, pin::Pin, sync::Arc, time::SystemTime};
-
-use tracing_subscriber::registry::{LookupSpan, SpanRef};
+use core::{marker::PhantomData, pin::Pin};
+extern crate alloc;
+use alloc::sync::Arc;
 
 use crate::error::EtwError;
 
-use super::OutputMode;
+use super::{OutputMode, time};
 
 /// The ID of a provider group, as passed to
 /// [`LayerBuilder::with_provider_group`](crate::LayerBuilder::with_provider_group).
@@ -19,9 +19,10 @@ pub struct Provider<Mode: OutputMode> {
 }
 
 impl<Mode: OutputMode> crate::native::ProviderTraits for Provider<Mode> {
+    // The no-op provider is never enabled, so callsites can cache `Interest::never`.
     #[inline(always)]
     fn supports_enable_callback() -> bool {
-        false
+        true
     }
 
     fn is_valid_provider(_provider_name: &str) -> Result<(), EtwError> {
@@ -51,39 +52,26 @@ impl<Mode: OutputMode> crate::native::ProviderTraits for Provider<Mode> {
 }
 
 impl<OutMode: OutputMode> crate::native::EventWriter<OutMode> for Provider<OutMode> {
-    fn span_start<'a, 'b, R>(
+    fn span_start(
         self: Pin<&Self>,
-        _span: &'b SpanRef<'a, R>,
-        _timestamp: SystemTime,
-        _activity_id: &[u8; 16],
-        _related_activity_id: &[u8; 16],
-        _fields: &'b [crate::values::span_values::FieldValueIndex],
-        _level: &tracing_core::Level,
+        _data: crate::layer::common::SpanRef,
         _keyword: u64,
         _event_tag: u32,
-    ) where
-        R: LookupSpan<'a>,
-    {
+    ) {
     }
 
-    fn span_stop<'a, 'b, R>(
+    fn span_stop(
         self: Pin<&Self>,
-        _span: &'b SpanRef<'a, R>,
-        _start_stop_times: (std::time::SystemTime, std::time::SystemTime),
-        _activity_id: &[u8; 16],
-        _related_activity_id: &[u8; 16],
-        _fields: &'b [crate::values::span_values::FieldValueIndex],
-        _level: &tracing_core::Level,
+        _start_stop_times: (time::CivilTime, time::CivilTime),
+        _data: crate::layer::common::SpanRef,
         _keyword: u64,
         _event_tag: u32,
-    ) where
-        R: LookupSpan<'a>,
-    {
+    ) {
     }
 
     fn write_record(
         self: Pin<&Self>,
-        _timestamp: SystemTime,
+        _timestamp: time::CivilTime,
         _current_span: u64,
         _parent_span: u64,
         _event_name: &str,
@@ -91,7 +79,7 @@ impl<OutMode: OutputMode> crate::native::EventWriter<OutMode> for Provider<OutMo
         _keyword: u64,
         _event_tag: u32,
         _event: &tracing::Event<'_>,
-        _otel_context: Option<([u8; 32], [u8; 16])>,
+        _span_strings: Option<crate::layer::common::SpanStrings>,
     ) {
     }
 }

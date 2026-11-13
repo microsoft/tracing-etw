@@ -1,7 +1,7 @@
 #![allow(unused_imports, dead_code)]
 
-use criterion::{criterion_group, criterion_main, Criterion};
-use tracing::{event, span, Level};
+use criterion::{Criterion, criterion_group, criterion_main};
+use tracing::{Level, event, span};
 use tracing_etw::*;
 use tracing_subscriber::{self, prelude::*};
 
@@ -111,9 +111,7 @@ pub fn user_events_benchmark(c: &mut Criterion) {
                     name: "evtname",
                     Level::INFO,
                     1,
-                    field1 = 1,
-                    field2 = "asdf",
-                    field3 = 1.1,
+                    { field1 = 1, field2 = "asdf", field3 = 1.1 },
                     "Enabled event!"
                 );
             })

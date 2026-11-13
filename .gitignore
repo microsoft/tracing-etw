@@ -1,4 +1,6 @@
 /target
 /Cargo.lock
+/tests/no_std/target
+/tests/no_std/Cargo.lock
 /.vscode/
 *.etl

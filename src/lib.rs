@@ -41,9 +41,43 @@
 //! The [decode_perf](https://github.com/microsoft/LinuxTracepoints/tree/main/libeventheader-decode-cpp)
 //! sample tool can be used to do this currently; in the future support will be added to additional tools.
 //!
+//! ## Features and no_std
+//!
+//! Default features enable `std` and OpenTelemetry integration. Disabling default
+//! features selects a standalone subscriber using `no_std + alloc` on Windows
+//! and Linux. Native OS services and an allocator are still required; this is
+//! not support for freestanding targets. Other platforms retain a std-backed
+//! no-op exporter. The `opentelemetry` feature always enables `std`.
+//!
+//! ```toml
+//! [dependencies]
+//! tracing-etw = { version = "0.4", default-features = false }
+//! tracing = { version = "0.1", default-features = false }
+//! ```
+//!
+//! [LayerBuilder::build_subscriber] constructs the standalone subscriber in either
+//! configuration, and is the builder to use without `std`; the registry-backed
+//! `build()`, `build_layer()`, and `build_with_target()` require `std`. Builder signatures do not depend on features, so enabling `std`
+//! elsewhere in a dependency graph does not change existing calls.
+//! Install it with `tracing::subscriber::set_global_default`. Span context and
+//! event builders use native thread-local storage with exit cleanup (fiber-local
+//! storage on Windows). No-std executables supply their own panic handler and
+//! native startup, as well as their allocator.
+//!
+//! The native thread-local keys and their cleanup callbacks are never
+//! unregistered. Without `std`, this crate must not be used from a DLL or shared
+//! object that can be unloaded (`FreeLibrary` / `dlclose`) while threads that
+//! logged are still running, as the OS would later invoke the callback in
+//! unmapped code.
+//!
+//! See the README's Breaking Changes section for migration steps between versions.
+//!
 //! ## Example
 //!
+//! This example uses the default, registry-enabled feature configuration.
+//!
 //! ```no_run
+//! # #[cfg(feature = "std")] {
 //! use tracing::{event, Level};
 //! use tracing_subscriber::{self, prelude::*};
 //!
@@ -52,6 +86,7 @@
 //!     .init();
 //!
 //! event!(Level::INFO, fieldB = b'x', fieldA = 7, "Event Message!");
+//! # }
 //! ```
 //!
 //! ## etw_event macro
@@ -118,42 +153,36 @@
 //! first event has been logged.
 //!
 //! - Each `tracing-etw::Layer` that is added will heap allocate some internal state
-//! when `build` is called.
+//!   when `build` is called.
 //!
-//! - Logging events with the [Debug][std::fmt::Debug] format specifier (`:?`) will
-//! necessitate a heap allocation to format the value into a string.
+//! - Event fields formatted with the [Debug][core::fmt::Debug] format specifier (`:?`),
+//!   including every event message (which `tracing` presents as a debug format), are
+//!   formatted into a 512-byte stack buffer and copied directly into the event builder.
+//!   Only values that format to more than 512 bytes spill to a heap allocation.
 //!
-//! <div class="warning">
-//!
-//! All event messages (the format strings to the event) are, for reasons
-//! outside of the control of this crate, formatted as debug formats rather than as
-//! a string. This effectively means every single event is forced to perform at least
-//! one heap allocation. In benchmarking, this does not seem to be a major performance issue.
-//!
-//! </div>
-//!
-//! - Logging strings copies them to the heap first. This is a side-effect of how
-//! `tracing` presents the strings to each layer; the lifetime of the string is
-//! too short for what this crate currently needs, but it may be possible to improve
-//! this in the future.
+//! - Event string fields are borrowed and copied directly into the event builder,
+//!   without an intermediate heap copy.
 //!
 //! - Logging a span allocates a copy of the span's fields on the heap. This is needed
-//! so the values can be updated during execution and the final payload values logged
-//! when the span ends. This allocation is freed when the span ends.
+//!   so the values can be updated during execution and the final payload values logged
+//!   when the span ends. Span string and `Debug` fields are therefore converted to owned
+//!   strings (formatted on the stack first, then copied into an exactly sized allocation).
+//!   This allocation is freed when the span ends.
 //!
 //! - The first time an event is logged (the event is enabled at the platform layer and
-//! the logging code is run), this crate will scan the binary for any metadata left
-//! by the `etw_event!` macro. This information will be cached in a single heap
-//! allocation for later use by other logging calls. This cached memory is never freed
-//! until the process exits; if this crate is used in a dynamic library that unloads
-//! before the process exits, the memory will be leaked.
+//!   the logging code is run), this crate will scan the binary for any metadata left
+//!   by the `etw_event!` macro. This information will be cached in a single heap
+//!   allocation for later use by other logging calls. This cached memory is never freed
+//!   until the process exits; if this crate is used in a dynamic library that unloads
+//!   before the process exits, the memory will be leaked.
 //!
-//! - A thread-local event builder is allocated for each thread that logs an event.
-//! This allows for complete thread safety when logging events. This allocation
-//! will stay alive until the thread ends. Additionally, the builder itself will allocate
-//! scratch space for constructing the event. This scratch space will grow to fit the
-//! very largest event that has been logged so far, but will not shrink. Generally,
-//! this should not be much more than a few kilobytes per-thread.
+//! - A thread-local event builder is allocated for each thread that logs an event
+//!   (each Windows fiber when `std` is disabled).
+//!   This allows for complete thread safety when logging events. This allocation
+//!   will stay alive until the thread ends. Additionally, the builder itself will allocate
+//!   scratch space for constructing the event. This scratch space will grow to fit the
+//!   very largest event that has been logged so far, but will not shrink. Generally,
+//!   this should not be much more than a few kilobytes per-thread.
 //!
 //! ### Miscellaneous
 //!
@@ -167,7 +196,8 @@
 //! - [win_etw_tracing](https://crates.io/crates/win_etw_tracing): This crate should be
 //!   considered superseded by `tracing-etw` when it comes to utilizing it with `tracing`.
 //!   For logging directly to ETW without going through `tracing` it may still be used, though
-//!   the ETW team recommends using the [tracelogging] crate for this instead, as it allows the use
+//!   the ETW team recommends using the [tracelogging](https://crates.io/crates/tracelogging)
+//!   crate for this instead, as it allows the use
 //!   of features such as keywords, which are considered best practice for ETW events.
 //! - OpenTelemetry ETW / user_events exporters with `tracing-opentelemetry` layer: These crates
 //!   have significant performance overhead, and sending events through OpenTelemetry adds additional
@@ -182,6 +212,14 @@
 // only enables the `doc_cfg` feature when
 // the `docsrs` configuration attribute is defined
 #![cfg_attr(docsrs, feature(doc_cfg))]
+#![cfg_attr(not(feature = "std"), no_std)]
+
+// Tests and the no-op exporter on other platforms still use std.
+#[cfg(all(
+    not(feature = "std"),
+    any(test, not(any(windows, target_os = "linux")))
+))]
+extern crate std;
 
 mod layer_builder;
 // Module that abstracts the native ETW and Linux user_events APIs, depending on the target platform.
@@ -189,6 +227,8 @@ mod layer_builder;
 #[doc(hidden)]
 pub mod native;
 mod statics;
+mod sync;
+mod tls;
 mod values;
 // Module holding internal details that need to be public but should not be directly used by consumers of the crate.
 #[doc(hidden)]
@@ -203,16 +243,17 @@ pub(crate) mod otel;
 mod layer;
 
 pub use layer::EtwLayer;
-#[cfg(any(not(feature = "global_filter"), docsrs))]
-pub use layer::EtwFilter;
+#[cfg_attr(docsrs, doc(cfg(feature = "std")))]
+#[cfg(feature = "std")]
+pub use layer::registry_subscriber::EtwFilter;
 pub use layer_builder::LayerBuilder;
 pub use native::{CommonSchemaOutput, GuidWrapper, NormalOutput, OutputMode, ProviderGroupId};
 
 #[macro_export]
 macro_rules! etw_event {
     (target: $target:expr, name: $name:expr, $lvl:expr, $kw:expr, $tags:expr, { $($fields:tt)* } )=> ({
+        use $crate::_details::{paste, tracing, tracing_core};
         use tracing::Callsite;
-        use paste::paste;
 
         static CALLSITE: tracing::callsite::DefaultCallsite =
             tracing::callsite::DefaultCallsite::new(
